@@ -1,5 +1,5 @@
 // Apptentive SDK
-include ':apptentive'
+include ':apptentive', ':apptentive-internal-app'
 
 // Tests
 include 'test-app'
