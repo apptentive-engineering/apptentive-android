@@ -6,7 +6,7 @@
 
 package com.apptentive.android.sdk.storage;
 
-import android.text.TextUtils;
+import com.apptentive.android.sdk.util.StringUtils;
 
 public class Device implements Saveable, DataChangedListener {
 
@@ -36,13 +36,19 @@ public class Device implements Saveable, DataChangedListener {
 	private String localeLanguageCode;
 	private String localeRaw;
 	private String utcOffset;
+	private String advertiserId;
 	private IntegrationConfig integrationConfig;
 
 	private transient DataChangedListener listener;
+	private transient DeviceDataChangedListener deviceDataChangedListener;
 
 	public Device() {
 		customData = new CustomData();
 		integrationConfig = new IntegrationConfig();
+	}
+
+	public void setDeviceDataChangedListener(DeviceDataChangedListener deviceDataChangedListener) {
+		this.deviceDataChangedListener = deviceDataChangedListener;
 	}
 
 	@Override
@@ -54,6 +60,9 @@ public class Device implements Saveable, DataChangedListener {
 
 	@Override
 	public void notifyDataChanged() {
+		if (deviceDataChangedListener != null) {
+			deviceDataChangedListener.onDeviceDataChanged();
+		}
 		if (listener != null) {
 			listener.onDataChanged();
 		}
@@ -93,10 +102,12 @@ public class Device implements Saveable, DataChangedListener {
 		clone.localeLanguageCode = localeLanguageCode;
 		clone.localeRaw = localeRaw;
 		clone.utcOffset = utcOffset;
+		clone.advertiserId = advertiserId;
 		if (integrationConfig != null) {
 			clone.integrationConfig = integrationConfig.clone();
 		}
 		clone.listener = listener;
+		clone.deviceDataChangedListener = deviceDataChangedListener;
 		return clone;
 	}
 
@@ -107,7 +118,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setUuid(String uuid) {
-		if (!TextUtils.equals(this.uuid, uuid)) {
+		if (!StringUtils.equal(this.uuid, uuid)) {
 			this.uuid = uuid;
 			notifyDataChanged();
 		}
@@ -118,7 +129,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setOsName(String osName) {
-		if (!TextUtils.equals(this.osName, osName)) {
+		if (!StringUtils.equal(this.osName, osName)) {
 			this.osName = osName;
 			notifyDataChanged();
 		}
@@ -129,7 +140,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setOsVersion(String osVersion) {
-		if (!TextUtils.equals(this.osVersion, osVersion)) {
+		if (!StringUtils.equal(this.osVersion, osVersion)) {
 			this.osVersion = osVersion;
 			notifyDataChanged();
 		}
@@ -140,7 +151,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setOsBuild(String osBuild) {
-		if (!TextUtils.equals(this.osBuild, osBuild)) {
+		if (!StringUtils.equal(this.osBuild, osBuild)) {
 			this.osBuild = osBuild;
 			notifyDataChanged();
 		}
@@ -162,7 +173,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setManufacturer(String manufacturer) {
-		if (!TextUtils.equals(this.manufacturer, manufacturer)) {
+		if (!StringUtils.equal(this.manufacturer, manufacturer)) {
 			this.manufacturer = manufacturer;
 			notifyDataChanged();
 		}
@@ -173,7 +184,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setModel(String model) {
-		if (!TextUtils.equals(this.model, model)) {
+		if (!StringUtils.equal(this.model, model)) {
 			this.model = model;
 			notifyDataChanged();
 		}
@@ -184,7 +195,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setBoard(String board) {
-		if (!TextUtils.equals(this.board, board)) {
+		if (!StringUtils.equal(this.board, board)) {
 			this.board = board;
 			notifyDataChanged();
 		}
@@ -195,7 +206,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setProduct(String product) {
-		if (!TextUtils.equals(this.product, product)) {
+		if (!StringUtils.equal(this.product, product)) {
 			this.product = product;
 			notifyDataChanged();
 		}
@@ -206,7 +217,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setBrand(String brand) {
-		if (!TextUtils.equals(this.brand, brand)) {
+		if (!StringUtils.equal(this.brand, brand)) {
 			this.brand = brand;
 			notifyDataChanged();
 		}
@@ -217,7 +228,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setCpu(String cpu) {
-		if (!TextUtils.equals(this.cpu, cpu)) {
+		if (!StringUtils.equal(this.cpu, cpu)) {
 			this.cpu = cpu;
 			notifyDataChanged();
 		}
@@ -228,7 +239,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setDevice(String device) {
-		if (!TextUtils.equals(this.device, device)) {
+		if (!StringUtils.equal(this.device, device)) {
 			this.device = device;
 			notifyDataChanged();
 		}
@@ -239,7 +250,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setCarrier(String carrier) {
-		if (!TextUtils.equals(this.carrier, carrier)) {
+		if (!StringUtils.equal(this.carrier, carrier)) {
 			this.carrier = carrier;
 			notifyDataChanged();
 		}
@@ -250,7 +261,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setCurrentCarrier(String currentCarrier) {
-		if (!TextUtils.equals(this.currentCarrier, currentCarrier)) {
+		if (!StringUtils.equal(this.currentCarrier, currentCarrier)) {
 			this.currentCarrier = currentCarrier;
 			notifyDataChanged();
 		}
@@ -261,7 +272,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setNetworkType(String networkType) {
-		if (!TextUtils.equals(this.networkType, networkType)) {
+		if (!StringUtils.equal(this.networkType, networkType)) {
 			this.networkType = networkType;
 			notifyDataChanged();
 		}
@@ -272,7 +283,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setBuildType(String buildType) {
-		if (!TextUtils.equals(this.buildType, buildType)) {
+		if (!StringUtils.equal(this.buildType, buildType)) {
 			this.buildType = buildType;
 			notifyDataChanged();
 		}
@@ -283,7 +294,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setBuildId(String buildId) {
-		if (!TextUtils.equals(this.buildId, buildId)) {
+		if (!StringUtils.equal(this.buildId, buildId)) {
 			this.buildId = buildId;
 			notifyDataChanged();
 		}
@@ -294,7 +305,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setBootloaderVersion(String bootloaderVersion) {
-		if (!TextUtils.equals(this.bootloaderVersion, bootloaderVersion)) {
+		if (!StringUtils.equal(this.bootloaderVersion, bootloaderVersion)) {
 			this.bootloaderVersion = bootloaderVersion;
 			notifyDataChanged();
 		}
@@ -305,7 +316,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setRadioVersion(String radioVersion) {
-		if (!TextUtils.equals(this.radioVersion, radioVersion)) {
+		if (!StringUtils.equal(this.radioVersion, radioVersion)) {
 			this.radioVersion = radioVersion;
 			notifyDataChanged();
 		}
@@ -326,7 +337,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setLocaleCountryCode(String localeCountryCode) {
-		if (!TextUtils.equals(this.localeCountryCode, localeCountryCode)) {
+		if (!StringUtils.equal(this.localeCountryCode, localeCountryCode)) {
 			this.localeCountryCode = localeCountryCode;
 			notifyDataChanged();
 		}
@@ -337,7 +348,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setLocaleLanguageCode(String localeLanguageCode) {
-		if (!TextUtils.equals(this.localeLanguageCode, localeLanguageCode)) {
+		if (!StringUtils.equal(this.localeLanguageCode, localeLanguageCode)) {
 			this.localeLanguageCode = localeLanguageCode;
 			notifyDataChanged();
 		}
@@ -348,7 +359,7 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setLocaleRaw(String localeRaw) {
-		if (!TextUtils.equals(this.localeRaw, localeRaw)) {
+		if (!StringUtils.equal(this.localeRaw, localeRaw)) {
 			this.localeRaw = localeRaw;
 			notifyDataChanged();
 		}
@@ -359,8 +370,19 @@ public class Device implements Saveable, DataChangedListener {
 	}
 
 	public void setUtcOffset(String utcOffset) {
-		if (!TextUtils.equals(this.utcOffset, utcOffset)) {
+		if (!StringUtils.equal(this.utcOffset, utcOffset)) {
 			this.utcOffset = utcOffset;
+			notifyDataChanged();
+		}
+	}
+
+	public String getAdvertiserId() {
+		return advertiserId;
+	}
+
+	public void setAdvertiserId(String advertiserId) {
+		if (!StringUtils.equal(this.advertiserId, advertiserId)) {
+			this.advertiserId = advertiserId;
 			notifyDataChanged();
 		}
 	}

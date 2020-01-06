@@ -7,31 +7,15 @@
 package com.apptentive.android.sdk.storage;
 
 import android.content.Context;
-import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
-import android.support.test.InstrumentationRegistry;
-import android.support.test.runner.AndroidJUnit4;
-
-import com.apptentive.android.sdk.model.AppReleasePayload;
-import com.apptentive.android.sdk.model.DevicePayload;
-import com.apptentive.android.sdk.model.EventPayload;
-import com.apptentive.android.sdk.model.Payload;
-import com.apptentive.android.sdk.model.PersonPayload;
-import com.apptentive.android.sdk.model.SdkPayload;
+import androidx.test.InstrumentationRegistry;
+import androidx.test.runner.AndroidJUnit4;
+import com.apptentive.android.sdk.model.*;
 import com.apptentive.android.sdk.module.messagecenter.model.MessageFactory;
-
-import org.json.JSONException;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.ArrayList;
-import java.util.List;
+import java.io.*;
 
 @RunWith(AndroidJUnit4.class)
 public class ApptentiveDatabaseHelperTest {
@@ -82,32 +66,4 @@ public class ApptentiveDatabaseHelperTest {
 		return context.getDatabasePath("apptentive");
 	}
 
-	class ApptentiveDatabaseMockHelper extends ApptentiveDatabaseHelper {
-		private final String SQL_QUERY_PAYLOAD_LIST =
-			"SELECT * FROM " + PayloadEntry.TABLE_NAME +
-				" ORDER BY " + PayloadEntry.COLUMN_PRIMARY_KEY;
-
-		ApptentiveDatabaseMockHelper(Context context) {
-			super(context);
-		}
-
-		List<Payload> listPayloads(SQLiteDatabase db) throws JSONException {
-			Cursor cursor = null;
-			try {
-				cursor = db.rawQuery(SQL_QUERY_PAYLOAD_LIST, null);
-				List<Payload> payloads = new ArrayList<>(cursor.getCount());
-
-				Payload payload;
-				while (cursor.moveToNext()) {
-					// TODO: get data
-				}
-
-				return payloads;
-			} finally {
-				if (cursor != null) {
-					cursor.close();
-				}
-			}
-		}
-	}
 }

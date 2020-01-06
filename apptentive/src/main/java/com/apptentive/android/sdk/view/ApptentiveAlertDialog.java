@@ -4,17 +4,20 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.content.DialogInterface;
 import android.os.Bundle;
-import android.support.v4.app.DialogFragment;
-import android.support.v4.app.Fragment;
-import android.support.v4.app.FragmentTransaction;
-import android.support.v7.app.AlertDialog;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 
+import androidx.appcompat.app.AlertDialog;
+import androidx.fragment.app.DialogFragment;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentTransaction;
 import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.R;
+import com.apptentive.android.sdk.debug.ErrorMetrics;
+
+import static com.apptentive.android.sdk.util.Util.guarded;
 
 public class ApptentiveAlertDialog extends DialogFragment {
 
@@ -68,14 +71,14 @@ public class ApptentiveAlertDialog extends DialogFragment {
 				positiveButton.setVisibility(View.GONE);
 			} else {
 				positiveButton.setText(positiveButtonTxt);
-				positiveButton.setOnClickListener(new View.OnClickListener() {
-					@Override
-					public void onClick(View v) {
-						dismiss();
-						// TODO
-						getTargetFragment().onActivityResult(getTargetRequestCode(), Activity.RESULT_OK, getActivity().getIntent());
-					}
-				});
+				positiveButton.setOnClickListener(guarded(new View.OnClickListener() {
+							@Override
+							public void onClick(View v) {
+								dismiss();
+								// TODO
+								getTargetFragment().onActivityResult(getTargetRequestCode(), Activity.RESULT_OK, getActivity().getIntent());
+							}
+						}));
 			}
 
 			Button negativeButton = (Button) view.findViewById(R.id.button_negative);
@@ -84,16 +87,17 @@ public class ApptentiveAlertDialog extends DialogFragment {
 				negativeButton.setVisibility(View.GONE);
 			} else {
 				negativeButton.setText(negativeButtonTxt);
-				negativeButton.setOnClickListener(new View.OnClickListener() {
-					@Override
-					public void onClick(View v) {
-						dismiss();
-						getTargetFragment().onActivityResult(getTargetRequestCode(), Activity.RESULT_CANCELED, getActivity().getIntent());
-					}
-				});
+				negativeButton.setOnClickListener(guarded(new View.OnClickListener() {
+							@Override
+							public void onClick(View v) {
+								dismiss();
+								getTargetFragment().onActivityResult(getTargetRequestCode(), Activity.RESULT_CANCELED, getActivity().getIntent());
+							}
+						}));
 			}
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Error:");
+			ErrorMetrics.logException(e);
 		}
 		AlertDialog.Builder builder = new AlertDialog.Builder(getActivity());
 		if (view != null) {

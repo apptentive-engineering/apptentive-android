@@ -15,6 +15,9 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import static com.apptentive.android.sdk.ApptentiveLogTag.INTERACTIONS;
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
+
 /**
  * @author Sky Kelsey
  */
@@ -26,7 +29,7 @@ public class Targets extends JSONObject {
 		super(json);
 	}
 
-	public String getApplicableInteraction(String eventLabel) {
+	public String getApplicableInteraction(String eventLabel, boolean verbose) {
 		JSONArray invocations = optJSONArray(eventLabel);
 		if (invocations != null) {
 			for (int i = 0; i < invocations.length(); i++) {
@@ -37,16 +40,16 @@ public class Targets extends JSONObject {
 						Conversation conversation = ApptentiveInternal.getInstance().getConversation();
 						FieldManager fieldManager = new FieldManager(ApptentiveInternal.getInstance().getApplicationContext(), conversation.getVersionHistory(), conversation.getEventData(), conversation.getPerson(), conversation.getDevice(), conversation.getAppRelease());
 
-						if (invocation.isCriteriaMet(fieldManager)) {
+						if (invocation.isCriteriaMet(fieldManager, verbose)) {
 							return invocation.getInteractionId();
 						}
 					} catch (JSONException e) {
-						//
+						logException(e);
 					}
 				}
 			}
 		}
-		ApptentiveLog.v("No runnable Interactions for EventLabel: %s", eventLabel);
+		ApptentiveLog.v(INTERACTIONS, "No runnable Interactions for EventLabel: %s", eventLabel);
 		return null;
 	}
 }

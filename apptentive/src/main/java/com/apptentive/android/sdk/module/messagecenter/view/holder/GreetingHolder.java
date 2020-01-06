@@ -6,7 +6,7 @@
 
 package com.apptentive.android.sdk.module.messagecenter.view.holder;
 
-import android.support.v7.widget.RecyclerView;
+import androidx.recyclerview.widget.RecyclerView;
 import android.view.View;
 import android.widget.ImageButton;
 import android.widget.TextView;
@@ -17,6 +17,8 @@ import com.apptentive.android.sdk.module.messagecenter.model.MessageCenterGreeti
 import com.apptentive.android.sdk.module.messagecenter.view.ApptentiveAvatarView;
 import com.apptentive.android.sdk.util.Util;
 import com.apptentive.android.sdk.util.image.ImageUtil;
+
+import static com.apptentive.android.sdk.util.Util.guarded;
 
 
 public class GreetingHolder extends RecyclerView.ViewHolder {
@@ -41,11 +43,11 @@ public class GreetingHolder extends RecyclerView.ViewHolder {
 		body.setText(greeting.body);
 		body.setContentDescription(greeting.body);
 		ImageUtil.startDownloadAvatarTask(avatar, greeting.avatar);
-		infoButton.setOnClickListener(new View.OnClickListener() {
+		infoButton.setOnClickListener(guarded(new View.OnClickListener() {
 			public void onClick(final View view) {
 				// Don't let the info button open multiple copies of the About page.
 				view.setClickable(false);
-				view.postDelayed(new Runnable() {
+				view.postDelayed(new Runnable() { // TODO: replace with DispatchQueue
 					@Override
 					public void run() {
 						view.setClickable(true);
@@ -53,7 +55,7 @@ public class GreetingHolder extends RecyclerView.ViewHolder {
 				}, 300);
 				ApptentiveInternal.getInstance().showAboutInternal(Util.castContextToActivity(itemView.getContext()), false);
 			}
-		});
+		}));
 		infoButton.setClickable(true);
 	}
 }

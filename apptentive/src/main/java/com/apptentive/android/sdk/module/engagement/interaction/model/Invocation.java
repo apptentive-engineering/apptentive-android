@@ -11,6 +11,8 @@ import com.apptentive.android.sdk.module.engagement.logic.FieldManager;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
+
 /**
  * @author Sky Kelsey
  */
@@ -29,20 +31,20 @@ public class Invocation extends JSONObject {
 				return getString(KEY_INTERACTION_ID);
 			}
 		} catch (JSONException e) {
-			// Ignore
+			logException(e);
 		}
 		return null;
 	}
 
-	public boolean isCriteriaMet(FieldManager fieldManager) {
+	public boolean isCriteriaMet(FieldManager fieldManager, boolean verbose) {
 		try {
 			if (!isNull(KEY_CRITERIA)) {
 				JSONObject criteriaObject = getJSONObject(KEY_CRITERIA);
 				InteractionCriteria criteria = new InteractionCriteria(criteriaObject.toString());
-				return criteria.isMet(fieldManager);
+				return criteria.isMet(fieldManager, verbose);
 			}
 		} catch (JSONException e) {
-			// Ignore
+			logException(e);
 		}
 		return false;
 	}

@@ -18,11 +18,16 @@ import android.util.AttributeSet;
 import android.widget.ImageView;
 
 import com.apptentive.android.sdk.ApptentiveLog;
+import com.apptentive.android.sdk.ApptentiveLogTag;
 import com.apptentive.android.sdk.R;
+import com.apptentive.android.sdk.debug.ErrorMetrics;
 import com.apptentive.android.sdk.module.metric.MetricModule;
 
 import java.io.IOException;
 import java.net.URL;
+
+import static com.apptentive.android.sdk.ApptentiveLogTag.MESSAGES;
+import static com.apptentive.android.sdk.ApptentiveLogTag.UTIL;
 
 
 /**
@@ -150,7 +155,8 @@ public class ApptentiveAvatarView extends ImageView {
 				d.draw(canvas);
 				return b;
 			} catch (OutOfMemoryError e) {
-				ApptentiveLog.w(e, "Error creating bitmap.");
+				ApptentiveLog.w(UTIL, e, "Error creating bitmap.");
+				logException(e);
 				return null;
 			}
 		}
@@ -222,11 +228,12 @@ public class ApptentiveAvatarView extends ImageView {
 					URL url = new URL(urlString);
 					bitmap = BitmapFactory.decodeStream(url.openStream());
 				} catch (IOException e) {
-					ApptentiveLog.d(e, "Error opening avatar from URL: \"%s\"", urlString);
+					ApptentiveLog.e(UTIL, e, "Error opening avatar from URL: \"%s\"", urlString);
+					logException(e);
 				}
 				if (bitmap != null) {
 					final Bitmap finalBitmap = bitmap;
-					post(new Runnable() {
+					post(new Runnable() { // TODO: replace with DispatchQueue
 						public void run() {
 							setImageBitmap(finalBitmap);
 						}
@@ -237,7 +244,7 @@ public class ApptentiveAvatarView extends ImageView {
 		Thread.UncaughtExceptionHandler handler = new Thread.UncaughtExceptionHandler() {
 			@Override
 			public void uncaughtException(Thread thread, Throwable throwable) {
-				ApptentiveLog.w(throwable, "UncaughtException in AvatarView.");
+				ApptentiveLog.w(MESSAGES, throwable, "UncaughtException in AvatarView.");
 				MetricModule.sendError(throwable, null, null);
 			}
 		};
@@ -275,5 +282,9 @@ public class ApptentiveAvatarView extends ImageView {
 		public String toString() {
 			return String.format("scale = %f, deltaX = %f, deltaY = %f", scale, deltaX, deltaY);
 		}
+	}
+
+	private void logException(Throwable e) {
+		ErrorMetrics.logException(e); // TODO: add more context info
 	}
 }

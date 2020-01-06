@@ -13,6 +13,9 @@ import org.json.JSONObject;
 
 import java.util.*;
 
+import static com.apptentive.android.sdk.ApptentiveLogTag.UTIL;
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
+
 /**
  * @author Sky Kelsey
  */
@@ -59,7 +62,8 @@ public class JsonDiffer {
 					// Do nothing.
 				}
 			} catch (JSONException e) {
-				ApptentiveLog.w(e, "Error diffing object with key %s", key);
+				ApptentiveLog.w(UTIL, e, "Error diffing object with key %s", key);
+				logException(e);
 			} finally {
 				it.remove();
 			}
@@ -72,7 +76,7 @@ public class JsonDiffer {
 			try {
 				ret.put(key, updated.get(key));
 			} catch (JSONException e) {
-				// This can't happen.
+				logException(e);
 			}
 		}
 
@@ -80,7 +84,7 @@ public class JsonDiffer {
 		if (ret.length() == 0) {
 			ret = null;
 		}
-		ApptentiveLog.v("Generated diff: %s", ret);
+		ApptentiveLog.v(UTIL, "Generated diff: %s", ret);
 		return ret;
 	}
 
@@ -105,7 +109,8 @@ public class JsonDiffer {
 						return false;
 					}
 				} catch (JSONException e) {
-					ApptentiveLog.w(e, "Error comparing JSONObjects");
+					ApptentiveLog.w(UTIL, e, "Error comparing JSONObjects");
+					logException(e);
 					return false;
 				}
 			}
@@ -124,6 +129,7 @@ public class JsonDiffer {
 				}
 			} catch (JSONException e) {
 				ApptentiveLog.e(e, "");
+				logException(e);
 				return false;
 			}
 			return true;

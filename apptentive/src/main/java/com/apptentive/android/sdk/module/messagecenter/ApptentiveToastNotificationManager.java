@@ -23,6 +23,8 @@ import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
 
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
+
 
 public class ApptentiveToastNotificationManager {
 
@@ -139,7 +141,7 @@ public class ApptentiveToastNotificationManager {
 		try {
 			wManager.addView(tContainer, params);
 		} catch (Exception e) {
-			e.printStackTrace();
+			logException(e);
 		}
 		ObjectAnimator a = ObjectAnimator.ofFloat(tContainer.rootView, "translationY", -700, 0);
 		a.setDuration(600);
@@ -158,7 +160,7 @@ public class ApptentiveToastNotificationManager {
 	private void doDismiss() {
 		if (tContainer.getParent() != null) {
 			wManager.removeView(tContainer);
-			tContainer.postDelayed(new Runnable() {
+			tContainer.postDelayed(new Runnable() { // TODO: replace with DispatchQueue
 				@Override
 				public void run() {
 					processNext();

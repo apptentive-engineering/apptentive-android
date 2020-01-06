@@ -16,15 +16,6 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
-import android.support.v4.app.DialogFragment;
-import android.support.v4.app.Fragment;
-import android.support.v4.app.FragmentHostCallback;
-import android.support.v4.app.FragmentManager;
-import android.support.v4.app.FragmentTransaction;
-import android.support.v4.content.ContextCompat;
-import android.support.v7.app.ActionBar;
-import android.support.v7.app.AppCompatActivity;
-import android.support.v7.widget.Toolbar;
 import android.text.TextUtils;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -36,6 +27,9 @@ import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.ApptentiveViewExitType;
 import com.apptentive.android.sdk.R;
 import com.apptentive.android.sdk.conversation.Conversation;
+import com.apptentive.android.sdk.conversation.ConversationDispatchTask;
+import com.apptentive.android.sdk.conversation.ConversationProxy;
+import com.apptentive.android.sdk.debug.ErrorMetrics;
 import com.apptentive.android.sdk.model.ExtendedData;
 import com.apptentive.android.sdk.module.engagement.EngagementModule;
 import com.apptentive.android.sdk.module.engagement.interaction.InteractionManager;
@@ -43,28 +37,32 @@ import com.apptentive.android.sdk.module.engagement.interaction.model.Interactio
 import com.apptentive.android.sdk.util.Constants;
 import com.apptentive.android.sdk.util.StringUtils;
 import com.apptentive.android.sdk.util.Util;
+import com.apptentive.android.sdk.util.threading.DispatchQueue;
+import com.apptentive.android.sdk.util.threading.DispatchTask;
 
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-import static com.apptentive.android.sdk.debug.Assert.assertNotNull;
+import androidx.annotation.Nullable;
+import androidx.appcompat.app.ActionBar;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.Toolbar;
+import androidx.core.content.ContextCompat;
+import androidx.fragment.app.DialogFragment;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
+import androidx.fragment.app.FragmentTransaction;
+
+import static com.apptentive.android.sdk.ApptentiveHelper.dispatchConversationTask;
 
 public abstract class ApptentiveBaseFragment<T extends Interaction> extends DialogFragment implements InteractionManager.InteractionUpdateListener {
 
-	protected static final String EVENT_NAME_LAUNCH = "launch";
+	public static final String EVENT_NAME_LAUNCH = "launch";
 	private static final String HAS_LAUNCHED = "has_launched";
 
 	private final String fragmentName = getClass().getSimpleName();
-
-	/* Nested Fragment with ChildFragmentManager lost state in rev20/rev21 of Android support library
-	 * The following are needed to work around this issue
-	 */
-	private FragmentManager retainedChildFragmentManager;
-	private Class fragmentImplClass;
-	private Field hostField;
 
 	private int toolbarLayoutId = 0;
 	private Toolbar toolbar = null;
@@ -76,39 +74,10 @@ public abstract class ApptentiveBaseFragment<T extends Interaction> extends Dial
 	protected boolean hasLaunched;
 	protected String sectionTitle;
 
-	private Conversation conversation;
 	private OnFragmentTransitionListener onTransitionListener;
 
 	public interface OnFragmentTransitionListener {
 		void onFragmentTransition(ApptentiveBaseFragment currentFragment);
-	}
-
-	{
-
-		// Prepare the reflections to manage hidden fields
-		try {
-			fragmentImplClass = Class.forName("android.support.v4.app.FragmentManagerImpl");
-			hostField = fragmentImplClass.getDeclaredField("mHost");
-			hostField.setAccessible(true);
-		} catch (ClassNotFoundException e) {
-			throw new RuntimeException("FragmentManagerImpl is renamed due to the " +
-					"change of Android SDK, this workaround doesn't work any more. " +
-					"See the issue at " +
-					"https://code.google.com/p/android/issues/detail?id=74222", e);
-		} catch (NoSuchFieldException e) {
-			throw new RuntimeException("FragmentManagerImpl.mHost is found due to the " +
-					"change of Android SDK, this workaround doesn't work any more. " +
-					"See the issue at " +
-					"https://code.google.com/p/android/issues/detail?id=74222", e);
-		}
-	}
-
-	//use the retained childFragmentManager after the rotation.
-	public FragmentManager getRetainedChildFragmentManager() {
-		if (retainedChildFragmentManager == null) {
-			retainedChildFragmentManager = getChildFragmentManager();
-		}
-		return retainedChildFragmentManager;
 	}
 
 	public String getFragmentName() {
@@ -120,7 +89,7 @@ public abstract class ApptentiveBaseFragment<T extends Interaction> extends Dial
 		return isChangingConfigurations;
 	}
 
-	public Context getContext() {
+	public @Nullable Context getContext() {
 		Context context = super.getContext();
 		return context != null ? context : ApptentiveInternal.getInstance().getApplicationContext();
 	}
@@ -130,11 +99,17 @@ public abstract class ApptentiveBaseFragment<T extends Interaction> extends Dial
 	}
 
 	public void transit() {
-		if (onTransitionListener != null) {
-			onTransitionListener.onFragmentTransition(this);
+		try {
+			if (onTransitionListener != null) {
+				onTransitionListener.onFragmentTransition(this);
+			}
+		} catch (Exception e) {
+			ApptentiveLog.e("Exception in %s.transit()", ApptentiveBaseFragment.class.getSimpleName());
+			logException(e);
 		}
 	}
 
+	/* Guarded */
 	@Override
 	public void onSaveInstanceState(Bundle outState) {
 		super.onSaveInstanceState(outState);
@@ -142,107 +117,44 @@ public abstract class ApptentiveBaseFragment<T extends Interaction> extends Dial
 	}
 
 	@Override
-	public void onAttach(Context context) {
-		super.onAttach(context);
-		if (retainedChildFragmentManager != null) {
-			//Use the retained child fragment manager after rotation
-			try {
-				//Set the retained ChildFragmentManager to the field
-				Field field = Fragment.class.getDeclaredField("mChildFragmentManager");
-				field.setAccessible(true);
-				field.set(this, retainedChildFragmentManager);
-
-				updateHosts(getFragmentManager(), (FragmentHostCallback) hostField.get(getFragmentManager()));
-			} catch (Exception e) {
-				ApptentiveLog.w(e, e.getMessage());
-			}
-		} else {
-			//If the child fragment manager has not been retained yet
-			retainedChildFragmentManager = getChildFragmentManager();
-		}
-
-	}
-
-	private void updateHosts(FragmentManager fragmentManager, FragmentHostCallback currentHost) throws IllegalAccessException {
-		if (fragmentManager != null) {
-			replaceFragmentManagerHost(fragmentManager, currentHost);
-		}
-
-		//replace host(activity) of fragments already added
-		List<Fragment> fragments = fragmentManager.getFragments();
-		if (fragments != null) {
-			for (Fragment fragment : fragments) {
-				if (fragment != null) {
-					try {
-						//Copy the mHost(Activity) to retainedChildFragmentManager
-						Field mHostField = Fragment.class.getDeclaredField("mHost");
-						mHostField.setAccessible(true);
-						mHostField.set(fragment, currentHost);
-					} catch (Exception e) {
-						ApptentiveLog.w(e, e.getMessage());
-					}
-					if (fragment.getChildFragmentManager() != null) {
-						updateHosts(fragment.getChildFragmentManager(), currentHost);
-					}
-				}
-			}
-		}
-	}
-
-	private void replaceFragmentManagerHost(FragmentManager fragmentManager, FragmentHostCallback currentHost) throws IllegalAccessException {
-		if (currentHost != null) {
-			hostField.set(fragmentManager, currentHost);
-		}
-	}
-
-	@Override
-	public void onDetach() {
-		super.onDetach();
-		try {
-			Field childFragmentManager = Fragment.class.getDeclaredField("mChildFragmentManager");
-			childFragmentManager.setAccessible(true);
-			childFragmentManager.set(this, null);
-		} catch (NoSuchFieldException e) {
-			throw new RuntimeException(e);
-		} catch (IllegalAccessException e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 
-		Bundle bundle = getArguments();
+		try {
+			Bundle bundle = getArguments();
 
-		if (bundle != null) {
-			toolbarLayoutId = bundle.getInt(Constants.FragmentConfigKeys.TOOLBAR_ID);
-			bShownAsModal = bundle.getBoolean(Constants.FragmentConfigKeys.MODAL, false);
-			String interactionString = bundle.getString("interaction");
-			if (!TextUtils.isEmpty(interactionString)) {
-				interaction = (T) Interaction.Factory.parseInteraction(interactionString);
+			if (bundle != null) {
+				toolbarLayoutId = bundle.getInt(Constants.FragmentConfigKeys.TOOLBAR_ID);
+				bShownAsModal = bundle.getBoolean(Constants.FragmentConfigKeys.MODAL, false);
+				String interactionString = bundle.getString("interaction");
+				if (!TextUtils.isEmpty(interactionString)) {
+					interaction = (T) Interaction.Factory.parseInteraction(interactionString);
+				}
 			}
-		}
 
-		if (interaction != null) {
-			// Set the title for modal Interactions for TalkBack support here. Fullscreen Interactions will set title in the ViewPager when they page into view.
-			if (bShownAsModal) {
-				getActivity().setTitle(interaction.getTitle());
-			} else {
-				sectionTitle = interaction.getTitle();
+			if (interaction != null) {
+				// Set the title for modal Interactions for TalkBack support here. Fullscreen Interactions will set title in the ViewPager when they page into view.
+				if (bShownAsModal) {
+					getActivity().setTitle(interaction.getTitle());
+				} else {
+					sectionTitle = interaction.getTitle();
+				}
 			}
-		}
 
-		if (toolbarLayoutId != 0 && getMenuResourceId() != 0) {
-			setHasOptionsMenu(true);
-		}
+			if (toolbarLayoutId != 0 && getMenuResourceId() != 0) {
+				setHasOptionsMenu(true);
+			}
 
-		if (savedInstanceState != null) {
-			hasLaunched = savedInstanceState.getBoolean(HAS_LAUNCHED);
-		}
-		if (!hasLaunched) {
-			hasLaunched = true;
-			sendLaunchEvent(getActivity());
+			if (savedInstanceState != null) {
+				hasLaunched = savedInstanceState.getBoolean(HAS_LAUNCHED);
+			}
+			if (!hasLaunched) {
+				hasLaunched = true;
+				sendLaunchEvent(getActivity());
+			}
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onCreate()", getClass().getSimpleName());
+			logException(e);
 		}
 	}
 
@@ -251,6 +163,7 @@ public abstract class ApptentiveBaseFragment<T extends Interaction> extends Dial
 	 *
 	 * @param activity The launching Activity
 	 */
+	/* Guarded */
 	protected void sendLaunchEvent(Activity activity) {
 		if (interaction != null) {
 			engageInternal(EVENT_NAME_LAUNCH);
@@ -260,51 +173,66 @@ public abstract class ApptentiveBaseFragment<T extends Interaction> extends Dial
 	@Override
 	public void onViewCreated(View view, Bundle savedInstanceState) {
 		super.onViewCreated(view, savedInstanceState);
-		if (toolbarLayoutId != 0) {
-			toolbar = (Toolbar) getActivity().findViewById(toolbarLayoutId);
-			if (getMenuResourceId() != 0 && toolbar != null) {
-				Menu parentMenu = toolbar.getMenu();
-				ArrayList parentMenuItems = new ArrayList();
-        // Before creating fragment, host activity may already has menu items on toolbar
-				for (int fragmentMenu = 0; fragmentMenu < parentMenu.size(); ++fragmentMenu) {
-					parentMenuItems.add(Integer.valueOf(parentMenu.getItem(fragmentMenu).getItemId()));
-				}
-        // Add to toolbar menu items and menu listeners created this fragment
-				toolbar.inflateMenu(getMenuResourceId());
-				attachFragmentMenuListeners(toolbar.getMenu());
 
-				//
-				Menu combinedMenu = toolbar.getMenu();
-				fragmentMenuItems = new ArrayList();
+		try {
+			if (toolbarLayoutId != 0) {
+				toolbar = (Toolbar) getActivity().findViewById(toolbarLayoutId);
+				if (getMenuResourceId() != 0 && toolbar != null) {
+					Menu parentMenu = toolbar.getMenu();
+					ArrayList parentMenuItems = new ArrayList();
+					// Before creating fragment, host activity may already has menu items on toolbar
+					for (int fragmentMenu = 0; fragmentMenu < parentMenu.size(); ++fragmentMenu) {
+						parentMenuItems.add(Integer.valueOf(parentMenu.getItem(fragmentMenu).getItemId()));
+					}
+					// Add to toolbar menu items and menu listeners created this fragment
+					toolbar.inflateMenu(getMenuResourceId());
+					attachFragmentMenuListeners(toolbar.getMenu());
 
-				int colorControlNormal = Util.getThemeColor(ApptentiveInternal.getInstance().getApptentiveToolbarTheme(), R.attr.colorControlNormal);
-				for (int i = 0; i < combinedMenu.size(); ++i) {
-					int menuItemId = combinedMenu.getItem(i).getItemId();
-          // fragmentMenuItems contains new menu items added by this fragment
-					if (!parentMenuItems.contains(Integer.valueOf(menuItemId))) {
-						fragmentMenuItems.add(Integer.valueOf(menuItemId));
-						Drawable drawable = combinedMenu.getItem(i).getIcon();
-						if(drawable != null) {
-							drawable.mutate();
-							drawable.setColorFilter(colorControlNormal, PorterDuff.Mode.SRC_ATOP);
+					//
+					Menu combinedMenu = toolbar.getMenu();
+					fragmentMenuItems = new ArrayList();
+
+					int colorControlNormal = Util.getThemeColor(ApptentiveInternal.getInstance().getApptentiveToolbarTheme(), R.attr.colorControlNormal);
+					for (int i = 0; i < combinedMenu.size(); ++i) {
+						int menuItemId = combinedMenu.getItem(i).getItemId();
+						// fragmentMenuItems contains new menu items added by this fragment
+						if (!parentMenuItems.contains(Integer.valueOf(menuItemId))) {
+							fragmentMenuItems.add(Integer.valueOf(menuItemId));
+							Drawable drawable = combinedMenu.getItem(i).getIcon();
+							if (drawable != null) {
+								drawable.mutate();
+								drawable.setColorFilter(colorControlNormal, PorterDuff.Mode.SRC_ATOP);
+							}
 						}
 					}
 				}
 			}
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onViewCreated()", ApptentiveBaseFragment.class.getSimpleName());
+			logException(e);
 		}
-
 	}
 
 
 	@Override
 	public void onResume() {
-		ApptentiveInternal.getInstance().addInteractionUpdateListener(this);
+		try {
+			ApptentiveInternal.getInstance().addInteractionUpdateListener(this);
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onResume()", ApptentiveBaseFragment.class.getSimpleName());
+			logException(e);
+		}
 		super.onResume();
 	}
 
 	@Override
 	public void onPause() {
-		ApptentiveInternal.getInstance().removeInteractionUpdateListener(this);
+		try {
+			ApptentiveInternal.getInstance().removeInteractionUpdateListener(this);
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onPause()", ApptentiveBaseFragment.class.getSimpleName());
+			logException(e);
+		}
 		super.onPause();
 	}
 
@@ -315,42 +243,57 @@ public abstract class ApptentiveBaseFragment<T extends Interaction> extends Dial
 	@Override
 	public void onStop() {
 		super.onStop();
-		if (Build.VERSION.SDK_INT >= 11 && getActivity() != null) {
-			isChangingConfigurations = getActivity().isChangingConfigurations();
+		try {
+			if (Build.VERSION.SDK_INT >= 11 && getActivity() != null) {
+				isChangingConfigurations = getActivity().isChangingConfigurations();
+			}
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onStop()", ApptentiveBaseFragment.class.getSimpleName());
+			logException(e);
 		}
-
 	}
 
 	@Override
 	public void onDestroyView() {
 		super.onDestroyView();
-		if (toolbar != null && fragmentMenuItems != null) {
-			Menu toolbarMenu = toolbar.getMenu();
-			Iterator it = fragmentMenuItems.iterator();
-      // Remove menu items added by this fragment
-			while (it.hasNext()) {
-				Integer menuItem = (Integer) it.next();
 
-				toolbarMenu.removeItem(menuItem.intValue());
+		try {
+			if (toolbar != null && fragmentMenuItems != null) {
+				Menu toolbarMenu = toolbar.getMenu();
+				Iterator it = fragmentMenuItems.iterator();
+				// Remove menu items added by this fragment
+				while (it.hasNext()) {
+					Integer menuItem = (Integer) it.next();
+
+					toolbarMenu.removeItem(menuItem.intValue());
+				}
 			}
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onDestroyView()", ApptentiveBaseFragment.class.getSimpleName());
+			logException(e);
 		}
 
 	}
 
 	@Override
 	public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
-		inflater.inflate(getMenuResourceId(), menu);
-		// Make menu icon color same as toolbar up arrow. Both use ?colorControlNormal
-		// By default colorControlNormal has same value as textColorPrimary defined in toolbar theme overlay
-		int colorControlNormal = Util.getThemeColor(ApptentiveInternal.getInstance().getApptentiveToolbarTheme(), R.attr.colorControlNormal);
-		for(int i = 0; i < menu.size(); i++){
-			Drawable drawable = menu.getItem(i).getIcon();
-			if(drawable != null) {
-				drawable.mutate();
-				drawable.setColorFilter(colorControlNormal, PorterDuff.Mode.SRC_ATOP);
+		try {
+			inflater.inflate(getMenuResourceId(), menu);
+			// Make menu icon color same as toolbar up arrow. Both use ?colorControlNormal
+			// By default colorControlNormal has same value as textColorPrimary defined in toolbar theme overlay
+			int colorControlNormal = Util.getThemeColor(ApptentiveInternal.getInstance().getApptentiveToolbarTheme(), R.attr.colorControlNormal);
+			for (int i = 0; i < menu.size(); i++) {
+				Drawable drawable = menu.getItem(i).getIcon();
+				if (drawable != null) {
+					drawable.mutate();
+					drawable.setColorFilter(colorControlNormal, PorterDuff.Mode.SRC_ATOP);
+				}
 			}
+			attachFragmentMenuListeners(menu);
+		} catch (Exception e) {
+			ApptentiveLog.e("Exception in %s.onCreateOptionsMenu()", ApptentiveBaseFragment.class.getSimpleName());
+			logException(e);
 		}
-		attachFragmentMenuListeners(menu);
 		super.onCreateOptionsMenu(menu, inflater);
 	}
 
@@ -420,10 +363,12 @@ public abstract class ApptentiveBaseFragment<T extends Interaction> extends Dial
 
 	/**
 	 * Delegates the hardware or software back button press to the Interaction Fragment.
+	 *
 	 * @return
 	 */
+	/* Guarded */
 	public boolean onFragmentExit(ApptentiveViewExitType exitType) {
-		List fragments = getRetainedChildFragmentManager().getFragments();
+		List fragments = getChildFragmentManager().getFragments();
 
 		if (fragments != null) {
 			Iterator it = fragments.iterator();
@@ -525,28 +470,38 @@ public abstract class ApptentiveBaseFragment<T extends Interaction> extends Dial
 
 	//region Helpers
 
-	public boolean engage(String vendor, String interaction, String interactionId, String eventName, String data, Map<String, Object> customData, ExtendedData... extendedData) {
-		Conversation conversation = getConversation();
-		assertNotNull(conversation, "Attempted to engage '%s' event without an active conversation", eventName);
-		return conversation != null && EngagementModule.engage(getActivity(), conversation, vendor, interaction, interactionId, eventName, data, customData, extendedData);
+	public void engage(final String vendor, final String interaction, final String interactionId, final String eventName, final String data, final Map<String, Object> customData, final ExtendedData... extendedData) {
+		dispatchConversationTask(new ConversationDispatchTask() {
+			@Override
+			protected boolean execute(Conversation conversation) {
+				return EngagementModule.engage(getActivity(), conversation, vendor, interaction, interactionId, eventName, data, customData, extendedData);
+			}
+		}, "engage");
 	}
 
-	public boolean engageInternal(String eventName) {
-		return engageInternal(eventName, null);
+	public void engageInternal(String eventName) {
+		engageInternal(eventName, null);
 	}
 
-	public boolean engageInternal(String eventName, String data) {
-		Conversation conversation = getConversation();
-		assertNotNull(conversation, "Attempted to engage '%s' event without an active conversation", eventName);
-		return conversation != null && EngagementModule.engageInternal(getActivity(), conversation, interaction, eventName, data);
+	public void engageInternal(final String eventName, final String data) {
+		dispatchConversationTask(new ConversationDispatchTask() {
+			@Override
+			protected boolean execute(Conversation conversation) {
+				return EngagementModule.engageInternal(getActivity(), conversation, interaction, eventName, data);
+			}
+		}, "engage");
 	}
 
-	protected Conversation getConversation() {
-		return conversation;
+	protected @Nullable ConversationProxy getConversation() {
+		return ApptentiveInternal.getInstance().getConversationProxy();
 	}
 
-	public void setConversation(Conversation conversation) {
-		this.conversation = conversation;
+	protected void dispatchOnMainQueue(DispatchTask task) {
+		DispatchQueue.mainQueue().dispatchAsync(task);
+	}
+
+	protected static void logException(Exception e) {
+		ErrorMetrics.logException(e); // TODO: add context data
 	}
 
 	//endregion

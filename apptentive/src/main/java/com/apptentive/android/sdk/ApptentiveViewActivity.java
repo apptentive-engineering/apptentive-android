@@ -17,32 +17,34 @@ import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
-import android.support.v4.app.FragmentManager;
-import android.support.v4.content.ContextCompat;
-import android.support.v4.content.IntentCompat;
-import android.support.v4.content.res.ResourcesCompat;
-import android.support.v4.view.ViewPager;
-import android.support.v7.app.ActionBar;
-import android.support.v7.app.AppCompatDelegate;
-import android.support.v7.widget.Toolbar;
+import androidx.appcompat.app.ActionBar;
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.appcompat.widget.Toolbar;
+import androidx.core.content.ContextCompat;
+import androidx.core.content.res.ResourcesCompat;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 
+import androidx.fragment.app.FragmentManager;
+import androidx.viewpager.widget.ViewPager;
 import com.apptentive.android.sdk.adapter.ApptentiveViewPagerAdapter;
 import com.apptentive.android.sdk.conversation.Conversation;
 import com.apptentive.android.sdk.debug.Assert;
 import com.apptentive.android.sdk.model.FragmentFactory;
-import com.apptentive.android.sdk.module.engagement.EngagementModule;
 import com.apptentive.android.sdk.module.engagement.interaction.fragment.ApptentiveBaseFragment;
-import com.apptentive.android.sdk.module.metric.MetricModule;
 import com.apptentive.android.sdk.notifications.ApptentiveNotification;
 import com.apptentive.android.sdk.util.Constants;
 import com.apptentive.android.sdk.util.StringUtils;
 import com.apptentive.android.sdk.util.Util;
+import com.apptentive.android.sdk.util.threading.DispatchTask;
 
-import static com.apptentive.android.sdk.ApptentiveNotifications.*;
+import static com.apptentive.android.sdk.ApptentiveHelper.checkConversationQueue;
+import static com.apptentive.android.sdk.ApptentiveHelper.dispatchOnConversationQueue;
+import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_CONVERSATION_STATE_DID_CHANGE;
+import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_INTERACTIONS_SHOULD_DISMISS;
+import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_KEY_CONVERSATION;
 import static com.apptentive.android.sdk.debug.Assert.notNull;
 
 
@@ -64,35 +66,50 @@ public class ApptentiveViewActivity extends ApptentiveBaseActivity implements Ap
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 
-		Conversation conversation = notNull(ApptentiveInternal.getInstance().getConversation());
-		if (conversation == null) {
-			finish();
-			return;
-		}
-
-		if (getIntent().getExtras() == null) {
-			ApptentiveLog.w("ApptentiveViewActivity was started without any extras, which isn't allowed. Finishing Activity.");
-			finish();
-			return;
-		}
-
-		Bundle bundle = FragmentFactory.addDisplayModeToFragmentBundle(getIntent().getExtras());
-		boolean isInteractionModal = bundle.getBoolean(Constants.FragmentConfigKeys.MODAL);
-
-		ApptentiveBaseFragment newFragment = null;
-		if (savedInstanceState != null) {
-			// retrieve the retained fragment after orientation change using saved tag
-			String savedFragmentTag = savedInstanceState.getString(FRAGMENT_TAG);
-			newFragment = (ApptentiveBaseFragment) getSupportFragmentManager().findFragmentByTag(savedFragmentTag);
-			/* Since we always store tags of fragments in the ViewPager upon orientation change,
-			 * failure of retrieval indicate internal error
-			 */
-			if (newFragment == null) {
+		try {
+			if (!ApptentiveInternal.isApptentiveRegistered()) {
+				ApptentiveLog.e("Apptentive instance is not properly initialized. Finishing activity...");
 				finish();
 				return;
 			}
-		}
-		try {
+
+			dispatchOnConversationQueue(new DispatchTask() {
+				@Override
+				protected void execute() {
+					Conversation conversation = notNull(ApptentiveInternal.getInstance().getConversation());
+					if (conversation == null) {
+						dispatchOnMainQueue(new DispatchTask() {
+							@Override
+							protected void execute() {
+								finish();
+							}
+						});
+					}
+				}
+			});
+
+			if (getIntent().getExtras() == null) {
+				ApptentiveLog.w("ApptentiveViewActivity was started without any extras, which isn't allowed. Finishing Activity.");
+				finish();
+				return;
+			}
+
+			Bundle bundle = FragmentFactory.addDisplayModeToFragmentBundle(getIntent().getExtras());
+			boolean isInteractionModal = bundle.getBoolean(Constants.FragmentConfigKeys.MODAL);
+
+			ApptentiveBaseFragment newFragment = null;
+			if (savedInstanceState != null) {
+				// retrieve the retained fragment after orientation change using saved tag
+				String savedFragmentTag = savedInstanceState.getString(FRAGMENT_TAG);
+				newFragment = (ApptentiveBaseFragment) getSupportFragmentManager().findFragmentByTag(savedFragmentTag);
+				/* Since we always store tags of fragments in the ViewPager upon orientation change,
+				 * failure of retrieval indicate internal error
+				 */
+				if (newFragment == null) {
+					finish();
+					return;
+				}
+			}
 			fragmentType = bundle.getInt(Constants.FragmentConfigKeys.TYPE, Constants.FragmentTypes.UNKNOWN);
 
 			if (fragmentType != Constants.FragmentTypes.UNKNOWN) {
@@ -114,112 +131,111 @@ public class ApptentiveViewActivity extends ApptentiveBaseActivity implements Ap
 					if (fragmentType == Constants.FragmentTypes.ENGAGE_INTERNAL_EVENT) {
 						String eventName = getIntent().getStringExtra(Constants.FragmentConfigKeys.EXTRA);
 						if (eventName != null) {
-							EngagementModule.engageInternal(this, conversation, eventName);
+							engageInternal(eventName);
 						}
 					}
 					finish();
 					return;
 				}
-
 			}
+
+			setContentView(R.layout.apptentive_viewactivity);
+
+			toolbar = (Toolbar) findViewById(R.id.apptentive_toolbar);
+			setSupportActionBar(toolbar);
+
+			/* Add top padding by the amount of Status Bar height to avoid toolbar being covered when
+			 * status bar is translucent
+			 */
+			toolbar.setPadding(0, getToolbarHeightAdjustment(!isInteractionModal), 0, 0);
+
+			ActionBar actionBar = getSupportActionBar();
+
+			if (actionBar != null) {
+				actionBar.setDisplayHomeAsUpEnabled(true);
+				int navIconResId = newFragment.getToolbarNavigationIconResourceId(getTheme());
+				// Check if fragment may show an alternative navigation icon
+				if (navIconResId != 0) {
+					/* In order for the alternative icon has the same color used by toolbar icon,
+					 * need to apply the same color in toolbar theme
+					 * By default colorControlNormal has same value as textColorPrimary defined in toolbar theme overlay
+					 */
+					// Allows loading of vector drawable resources from XML
+					AppCompatDelegate.setCompatVectorFromResourcesEnabled(true);
+					final Drawable alternateUpArrow = ResourcesCompat.getDrawable(getResources(),
+						navIconResId,
+						getTheme());
+
+					int colorControlNormal = Util.getThemeColor(ApptentiveInternal.getInstance().getApptentiveToolbarTheme(), R.attr.colorControlNormal);
+					alternateUpArrow.setColorFilter(colorControlNormal, PorterDuff.Mode.SRC_ATOP);
+					actionBar.setHomeAsUpIndicator(alternateUpArrow);
+				}
+
+				String contentDescription = newFragment.getToolbarNavigationContentDescription();
+				if (!StringUtils.isNullOrEmpty(contentDescription)) {
+					actionBar.setHomeActionContentDescription(contentDescription);
+				}
+			}
+
+			//current_tab = extra.getInt(SELECTED_TAB_EXTRA_KEY, 0);
+			current_tab = 0;
+
+			addFragmentToAdapter(newFragment, newFragment.getTitle());
+
+			// Get the ViewPager and set it's PagerAdapter so that it can display items
+			viewPager = (ViewPager) findViewById(R.id.apptentive_vp);
+			viewPager.setAdapter(viewPager_Adapter);
+
+
+			ViewPager.OnPageChangeListener pageChangeListener = new ViewPager.OnPageChangeListener() {
+				Boolean first = true;
+
+				@Override
+				public void onPageSelected(int position) {
+					final ApptentiveBaseFragment currentFragment = (ApptentiveBaseFragment) viewPager_Adapter.getItem(viewPager.getCurrentItem());
+					// Set the Activity title for TalkBack support
+					final String title = currentFragment.getTitle();
+					if (currentFragment != null && currentFragment.getActivity() != null) {
+						currentFragment.getActivity().setTitle(title);
+					}
+					if (!currentFragment.isShownAsModalDialog()) {
+						toolbar.post(new Runnable() { // TODO: replace with DispatchQueue
+							@Override
+							public void run() {
+								toolbar.setVisibility(View.VISIBLE);
+								toolbar.setTitle(title);
+							}
+						});
+					} else {
+						toolbar.setVisibility(View.GONE);
+					}
+					current_tab = position;
+				}
+
+				@Override
+				public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {
+					if (first && positionOffset == 0 && positionOffsetPixels == 0) {
+						onPageSelected(current_tab);
+						first = false;
+					}
+				}
+
+				@Override
+				public void onPageScrollStateChanged(int pos) {
+					// TODO Auto-generated method stub
+				}
+			};
+
+			viewPager.addOnPageChangeListener(pageChangeListener);
+
+
+			// Needed to prevent the window from being panned up when the keyboard is opened.
+			getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 		} catch (Exception e) {
-			ApptentiveLog.e(e, "Error creating ApptentiveViewActivity.");
-			MetricModule.sendError(e, null, null);
+			ApptentiveLog.e(e, "Exception in %s.onCreate(). Finishing activity...", ApptentiveViewActivity.class.getSimpleName());
+			logException(e);
+			finish();
 		}
-
-		setContentView(R.layout.apptentive_viewactivity);
-
-		toolbar = (Toolbar) findViewById(R.id.apptentive_toolbar);
-		setSupportActionBar(toolbar);
-
-		/* Add top padding by the amount of Status Bar height to avoid toolbar being covered when
-		 * status bar is translucent
-		 */
-		toolbar.setPadding(0, getToolbarHeightAdjustment(!isInteractionModal), 0, 0);
-
-		ActionBar actionBar = getSupportActionBar();
-
-		if (actionBar != null) {
-			actionBar.setDisplayHomeAsUpEnabled(true);
-			int navIconResId = newFragment.getToolbarNavigationIconResourceId(getTheme());
-			// Check if fragment may show an alternative navigation icon
-			if (navIconResId != 0) {
-				/* In order for the alternative icon has the same color used by toolbar icon,
-				 * need to apply the same color in toolbar theme
-				 * By default colorControlNormal has same value as textColorPrimary defined in toolbar theme overlay
-				 */
-				// Allows loading of vector drawable resources from XML
-				AppCompatDelegate.setCompatVectorFromResourcesEnabled(true);
-				final Drawable alternateUpArrow = ResourcesCompat.getDrawable(getResources(),
-					navIconResId,
-					getTheme());
-
-				int colorControlNormal = Util.getThemeColor(ApptentiveInternal.getInstance().getApptentiveToolbarTheme(), R.attr.colorControlNormal);
-				alternateUpArrow.setColorFilter(colorControlNormal, PorterDuff.Mode.SRC_ATOP);
-				actionBar.setHomeAsUpIndicator(alternateUpArrow);
-			}
-
-			String contentDescription = newFragment.getToolbarNavigationContentDescription();
-			if (!StringUtils.isNullOrEmpty(contentDescription)) {
-				actionBar.setHomeActionContentDescription(contentDescription);
-			}
-		}
-
-		//current_tab = extra.getInt(SELECTED_TAB_EXTRA_KEY, 0);
-		current_tab = 0;
-
-		newFragment.setConversation(conversation);
-		addFragmentToAdapter(newFragment, newFragment.getTitle());
-
-		// Get the ViewPager and set it's PagerAdapter so that it can display items
-		viewPager = (ViewPager) findViewById(R.id.apptentive_vp);
-		viewPager.setAdapter(viewPager_Adapter);
-
-
-		ViewPager.OnPageChangeListener pageChangeListener = new ViewPager.OnPageChangeListener() {
-			Boolean first = true;
-
-			@Override
-			public void onPageSelected(int position) {
-				final ApptentiveBaseFragment currentFragment = (ApptentiveBaseFragment) viewPager_Adapter.getItem(viewPager.getCurrentItem());
-				// Set the Activity title for TalkBack support
-				final String title = currentFragment.getTitle();
-				if (currentFragment != null && currentFragment.getActivity() != null) {
-					currentFragment.getActivity().setTitle(title);
-				}
-				if (!currentFragment.isShownAsModalDialog()) {
-					toolbar.post(new Runnable() {
-						@Override
-						public void run() {
-							toolbar.setVisibility(View.VISIBLE);
-							toolbar.setTitle(title);
-						}
-					});
-				} else {
-					toolbar.setVisibility(View.GONE);
-				}
-				current_tab = position;
-			}
-
-			@Override
-			public void onPageScrolled(int position, float positionOffset, int positionOffsetPixels) {
-				if (first && positionOffset == 0 && positionOffsetPixels == 0) {
-					onPageSelected(current_tab);
-					first = false;
-				}
-			}
-
-			@Override
-			public void onPageScrollStateChanged(int pos) {
-				// TODO Auto-generated method stub
-			}
-		};
-
-		viewPager.addOnPageChangeListener(pageChangeListener);
-
-
-		// Needed to prevent the window from being panned up when the keyboard is opened.
-		getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
 	}
 
 	public boolean onOptionsItemSelected(MenuItem item) {
@@ -237,6 +253,15 @@ public class ApptentiveViewActivity extends ApptentiveBaseActivity implements Ap
 	 * Helper to clean up the Activity, whether it is exited through the toolbar back button, or the hardware back button.
 	 */
 	private void exitActivity(ApptentiveViewExitType exitType) {
+		try {
+			exitActivityGuarded(exitType);
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception while trying to exit activity (type=%s)", exitType);
+			logException(e);
+		}
+	}
+
+	private void exitActivityGuarded(ApptentiveViewExitType exitType) {
 		Util.hideSoftKeyboard(this, getCurrentFocus());
 
 		ApptentiveBaseFragment currentFragment = (ApptentiveBaseFragment) viewPager_Adapter.getItem(viewPager.getCurrentItem());
@@ -301,7 +326,7 @@ public class ApptentiveViewActivity extends ApptentiveBaseActivity implements Ap
 	private void applyApptentiveTheme(boolean isModalInteraction) {
 		// Update the activity theme to reflect current attributes
 		try {
-			ApptentiveInternal.getInstance().updateApptentiveInteractionTheme(getTheme(), this);
+			ApptentiveInternal.getInstance().updateApptentiveInteractionTheme(this, getTheme());
 
 			if (isModalInteraction) {
 				getTheme().applyStyle(R.style.ApptentiveBaseDialogTheme, true);
@@ -316,6 +341,7 @@ public class ApptentiveViewActivity extends ApptentiveBaseActivity implements Ap
 			}
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Error apply Apptentive Theme.");
+			logException(e);
 		}
 	}
 
@@ -336,13 +362,29 @@ public class ApptentiveViewActivity extends ApptentiveBaseActivity implements Ap
 	 * activity, instead of desktop.
 	 * */
 	private void startLauncherActivityIfRoot() {
-		if (isTaskRoot()) {
-			PackageManager packageManager = getPackageManager();
-			Intent intent = packageManager.getLaunchIntentForPackage(getPackageName());
-			ComponentName componentName = intent.getComponent();
-			/** Backwards compatible method that will clear all activities in the stack. */
-			Intent mainIntent = IntentCompat.makeRestartActivityTask(componentName);
-			startActivity(mainIntent);
+		try {
+			if (isTaskRoot()) {
+				PackageManager packageManager = getPackageManager();
+				Intent intent = packageManager.getLaunchIntentForPackage(getPackageName());
+			/*
+			 Make this work with Instant Apps. It is possible and even likely to create an Instant App
+			 that doesn't have the Main Activity included in its APK. In such cases, this Intent is null,
+			 and we can't do anything apart from exiting our Activity.
+			  */
+				if (intent != null) {
+					ComponentName componentName = intent.getComponent();
+					/* Backwards compatible method that will clear all activities in the stack. */
+					Intent mainIntent = Util.makeRestartActivityTask(componentName);
+					if (mainIntent != null) {
+						startActivity(mainIntent);
+					}
+				} else {
+					ApptentiveLog.w("Unable to start app's main activity: launch intent is missing");
+				}
+			}
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception while starting app's main activity");
+			logException(e);
 		}
 	}
 
@@ -435,13 +477,25 @@ public class ApptentiveViewActivity extends ApptentiveBaseActivity implements Ap
 
 	@Override
 	public void onReceiveNotification(ApptentiveNotification notification) {
+		checkConversationQueue();
+
 		if (notification.hasName(NOTIFICATION_INTERACTIONS_SHOULD_DISMISS)) {
-			dismissActivity();
+			dispatchOnMainQueue(new DispatchTask() {
+				@Override
+				protected void execute() {
+					dismissActivity();
+				}
+			});
 		} else if (notification.hasName(NOTIFICATION_CONVERSATION_STATE_DID_CHANGE)) {
 			final Conversation conversation = notification.getUserInfo(NOTIFICATION_KEY_CONVERSATION, Conversation.class);
 			Assert.assertNotNull(conversation, "Conversation expected to be not null");
 			if (conversation != null && !conversation.hasActiveState()) {
-				dismissActivity();
+				dispatchOnMainQueue(new DispatchTask() {
+					@Override
+					protected void execute() {
+						dismissActivity();
+					}
+				});
 			}
 		}
 	}

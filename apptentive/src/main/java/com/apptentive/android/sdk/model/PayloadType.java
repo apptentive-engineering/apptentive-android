@@ -8,6 +8,9 @@ package com.apptentive.android.sdk.model;
 
 import com.apptentive.android.sdk.ApptentiveLog;
 
+import static com.apptentive.android.sdk.ApptentiveLogTag.PAYLOADS;
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
+
 public enum PayloadType {
 	message,
 	event,
@@ -25,7 +28,8 @@ public enum PayloadType {
 		try {
 			return PayloadType.valueOf(type);
 		} catch (IllegalArgumentException e) {
-			ApptentiveLog.v("Error parsing unknown Payload.PayloadType: " + type);
+			ApptentiveLog.v(PAYLOADS, "Error parsing unknown Payload.PayloadType: " + type);
+			logException(e);
 		}
 		return unknown;
 	}

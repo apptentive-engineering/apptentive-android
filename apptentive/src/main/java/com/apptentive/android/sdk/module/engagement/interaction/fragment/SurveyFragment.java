@@ -11,7 +11,6 @@ import android.content.res.Resources;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
-import android.support.v4.app.Fragment;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -19,7 +18,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.view.accessibility.AccessibilityEvent;
 import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -27,6 +25,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.fragment.app.Fragment;
 import com.apptentive.android.sdk.ApptentiveInternal;
 import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.ApptentiveViewExitType;
@@ -49,6 +48,8 @@ import com.apptentive.android.sdk.module.survey.OnSurveyFinishedListener;
 import com.apptentive.android.sdk.module.survey.OnSurveyQuestionAnsweredListener;
 import com.apptentive.android.sdk.util.StringUtils;
 import com.apptentive.android.sdk.util.Util;
+import com.apptentive.android.sdk.util.threading.DispatchQueue;
+import com.apptentive.android.sdk.util.threading.DispatchTask;
 import com.apptentive.android.sdk.view.ApptentiveNestedScrollView;
 
 import org.json.JSONException;
@@ -57,6 +58,9 @@ import org.json.JSONObject;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import static com.apptentive.android.sdk.debug.Assert.assertMainThread;
+import static com.apptentive.android.sdk.util.Util.guarded;
 
 
 public class SurveyFragment extends ApptentiveBaseFragment<SurveyInteraction> implements OnSurveyQuestionAnsweredListener,
@@ -89,114 +93,122 @@ public class SurveyFragment extends ApptentiveBaseFragment<SurveyInteraction> im
 
 		View v = inflater.inflate(R.layout.apptentive_survey, container, false);
 
-		TextView description = (TextView) v.findViewById(R.id.description);
-		description.setText(interaction.getDescription());
+		try {
+			TextView description = (TextView) v.findViewById(R.id.description);
+			description.setText(interaction.getDescription());
 
-		final Button send = (Button) v.findViewById(R.id.send);
+			final Button send = (Button) v.findViewById(R.id.send);
 
-		String sendText = interaction.getSubmitText();
-		if (!TextUtils.isEmpty(sendText)) {
-			send.setText(sendText);
-		}
-		send.setOnClickListener(new View.OnClickListener() {
-			@Override
-			public void onClick(View view) {
-				Util.hideSoftKeyboard(getActivity(), view);
-				boolean valid = validateAndUpdateState();
-				if (valid) {
-					if (interaction.isShowSuccessMessage() && !TextUtils.isEmpty(interaction.getSuccessMessage())) {
+			String sendText = interaction.getSubmitText();
+			if (!TextUtils.isEmpty(sendText)) {
+				send.setText(sendText);
+			}
+			send.setOnClickListener(guarded(new View.OnClickListener() {
+				@Override
+				public void onClick(View view) {
+					Util.hideSoftKeyboard(getActivity(), view);
+					boolean valid = validateAndUpdateState();
+					if (valid) {
+						if (interaction.isShowSuccessMessage() && !TextUtils.isEmpty(interaction.getSuccessMessage())) {
+							Toast toast = new Toast(getContext());
+							toast.setGravity(Gravity.FILL, 0, 0);
+							toast.setDuration(Toast.LENGTH_SHORT);
+							View toastView = inflater.inflate(R.layout.apptentive_survey_sent_toast, (LinearLayout) getView().findViewById(R.id.survey_sent_toast_root));
+							toast.setView(toastView);
+							TextView actionTV = ((TextView) toastView.findViewById(R.id.survey_sent_action_text));
+							actionTV.setText(interaction.getSuccessMessage());
+							int actionColor = Util.getThemeColor(getContext(), R.attr.apptentiveSurveySentToastActionColor);
+							if (actionColor != 0) {
+								actionTV.setTextColor(actionColor);
+								ImageView actionIcon = (ImageView) toastView.findViewById(R.id.survey_sent_action_icon);
+								actionIcon.setColorFilter(actionColor);
+							}
+							toast.show();
+						}
+						getActivity().finish();
+
+						engageInternal(EVENT_SUBMIT);
+
+						getConversation().addPayload(new SurveyResponsePayload(interaction, answers));
+						ApptentiveLog.i("Survey Submitted.");
+						callListener(true);
+					} else {
 						Toast toast = new Toast(getContext());
-						toast.setGravity(Gravity.FILL, 0, 0);
+						toast.setGravity(Gravity.FILL_HORIZONTAL | Gravity.BOTTOM, 0, 0);
 						toast.setDuration(Toast.LENGTH_SHORT);
-						View toastView = inflater.inflate(R.layout.apptentive_survey_sent_toast, (LinearLayout) getView().findViewById(R.id.survey_sent_toast_root));
+						View toastView = inflater.inflate(R.layout.apptentive_survey_invalid_toast, (LinearLayout) getView().findViewById(R.id.survey_invalid_toast_root));
 						toast.setView(toastView);
-						TextView actionTV = ((TextView) toastView.findViewById(R.id.survey_sent_action_text));
-						actionTV.setText(interaction.getSuccessMessage());
-            int actionColor = Util.getThemeColor(getContext(), R.attr.apptentiveSurveySentToastActionColor);
-						if (actionColor != 0) {
-							actionTV.setTextColor(actionColor);
-							ImageView actionIcon = (ImageView) toastView.findViewById(R.id.survey_sent_action_icon);
-							actionIcon.setColorFilter(actionColor);
+						String validationText = interaction.getValidationError();
+						if (!TextUtils.isEmpty(validationText)) {
+							((TextView) toastView.findViewById(R.id.survey_invalid_toast_text)).setText(validationText);
 						}
 						toast.show();
-					}
-					getActivity().finish();
 
-					engageInternal(EVENT_SUBMIT);
+						// scroll to the first required un-answered question
+						final Fragment fragment = getFirstRequiredQuestionPos();
+						Assert.assertNotNull(fragment, "Expected to have a scroll pos");
+						if (fragment != null) {
+							scrollView.scrollToChild(fragment.getView());
 
-					getConversation().addPayload(new SurveyResponsePayload(interaction, answers));
-					ApptentiveLog.d("Survey Submitted.");
-					callListener(true);
-				} else {
-					Toast toast = new Toast(getContext());
-					toast.setGravity(Gravity.FILL_HORIZONTAL | Gravity.BOTTOM, 0, 0);
-					toast.setDuration(Toast.LENGTH_SHORT);
-					View toastView = inflater.inflate(R.layout.apptentive_survey_invalid_toast, (LinearLayout) getView().findViewById(R.id.survey_invalid_toast_root));
-					toast.setView(toastView);
-					String validationText = interaction.getValidationError();
-					if (!TextUtils.isEmpty(validationText)) {
-						((TextView) toastView.findViewById(R.id.survey_invalid_toast_text)).setText(validationText);
-					}
-					toast.show();
+							if (fragment instanceof SurveyQuestionView) {
+								fragment.getView().requestFocus();
 
-					// scroll to the first required un-answered question
-					final Fragment fragment = getFirstRequiredQuestionPos();
-					Assert.assertNotNull(fragment, "Expected to have a scroll pos");
-					if (fragment != null) {
-						scrollView.scrollToChild(fragment.getView());
-
-						if (fragment instanceof SurveyQuestionView) {
-							fragment.getView().requestFocus();
-
-							final String errorMessage = ((SurveyQuestionView) fragment).getErrorMessage();
-							if (!StringUtils.isNullOrEmpty(errorMessage)) {
-								fragment.getView().postDelayed(new Runnable() {
-									@Override
-									public void run() {
-										if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-											fragment.getView().announceForAccessibility(errorMessage);
+								final String errorMessage = ((SurveyQuestionView) fragment).getErrorMessage();
+								if (!StringUtils.isNullOrEmpty(errorMessage)) {
+									DispatchQueue.mainQueue().dispatchAsync(new DispatchTask() {
+										@Override
+										protected void execute() {
+											if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+												View fragmentView = fragment.getView();
+												if (fragmentView != null) {
+													fragmentView.announceForAccessibility(errorMessage);
+												}
+											}
 										}
-									}
-								}, 1500); // give other accessibility events a change to propagate
+									}, 1500); // give other accessibility events a change to propagate
+								}
 							}
 						}
 					}
 				}
-			}
-		});
+			}));
 
-		questionsContainer = (LinearLayout) v.findViewById(R.id.questions);
-		if (savedInstanceState == null) {
-			questionsContainer.removeAllViews();
+			questionsContainer = (LinearLayout) v.findViewById(R.id.questions);
+			if (savedInstanceState == null) {
+				questionsContainer.removeAllViews();
 
-			// Then render all the questions
-			for (int i = 0; i < questions.size(); i++) {
-				Question question = questions.get(i);
-				BaseSurveyQuestionView surveyQuestionView;
-				if (question.getType() == Question.QUESTION_TYPE_SINGLELINE) {
-					surveyQuestionView = TextSurveyQuestionView.newInstance((SinglelineQuestion) question);
-				} else if (question.getType() == Question.QUESTION_TYPE_MULTICHOICE) {
-					surveyQuestionView = MultichoiceSurveyQuestionView.newInstance((MultichoiceQuestion) question);
+				// Then render all the questions
+				for (int i = 0; i < questions.size(); i++) {
+					Question question = questions.get(i);
+					BaseSurveyQuestionView surveyQuestionView;
+					if (question.getType() == Question.QUESTION_TYPE_SINGLELINE) {
+						surveyQuestionView = TextSurveyQuestionView.newInstance((SinglelineQuestion) question);
+					} else if (question.getType() == Question.QUESTION_TYPE_MULTICHOICE) {
+						surveyQuestionView = MultichoiceSurveyQuestionView.newInstance((MultichoiceQuestion) question);
 
-				} else if (question.getType() == Question.QUESTION_TYPE_MULTISELECT) {
-					surveyQuestionView = MultiselectSurveyQuestionView.newInstance((MultiselectQuestion) question);
-				} else if (question.getType() == Question.QUESTION_TYPE_RANGE) {
-					surveyQuestionView = RangeSurveyQuestionView.newInstance((RangeQuestion) question);
-				} else {
-					surveyQuestionView = null;
+					} else if (question.getType() == Question.QUESTION_TYPE_MULTISELECT) {
+						surveyQuestionView = MultiselectSurveyQuestionView.newInstance((MultiselectQuestion) question);
+					} else if (question.getType() == Question.QUESTION_TYPE_RANGE) {
+						surveyQuestionView = RangeSurveyQuestionView.newInstance((RangeQuestion) question);
+					} else {
+						surveyQuestionView = null;
+					}
+					if (surveyQuestionView != null) {
+						surveyQuestionView.setOnSurveyQuestionAnsweredListener(this);
+						getChildFragmentManager().beginTransaction().add(R.id.questions, surveyQuestionView, Integer.toString(i)).commit();
+					}
 				}
-				if (surveyQuestionView != null) {
-					surveyQuestionView.setOnSurveyQuestionAnsweredListener(this);
-					getRetainedChildFragmentManager().beginTransaction().add(R.id.questions, surveyQuestionView, Integer.toString(i)).commit();
+			} else {
+				List<Fragment> fragments = getChildFragmentManager().getFragments();
+				for (Fragment fragment : fragments) {
+					BaseSurveyQuestionView questionFragment = (BaseSurveyQuestionView) fragment;
+					questionFragment.setOnSurveyQuestionAnsweredListener(this);
+
 				}
 			}
-		} else {
-			List<Fragment> fragments = getRetainedChildFragmentManager().getFragments();
-			for (Fragment fragment : fragments) {
-				BaseSurveyQuestionView questionFragment = (BaseSurveyQuestionView) fragment;
-				questionFragment.setOnSurveyQuestionAnsweredListener(this);
-
-			}
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onCreateView()", SurveyFragment.class.getSimpleName());
+			logException(e);
 		}
 		return v;
 	}
@@ -204,49 +216,54 @@ public class SurveyFragment extends ApptentiveBaseFragment<SurveyInteraction> im
 	@Override
 	public void onViewCreated(View view, Bundle savedInstanceState) {
 		super.onViewCreated(view, savedInstanceState);
-		ImageButton infoButton = (ImageButton) view.findViewById(R.id.info);
-		infoButton.setOnClickListener(new View.OnClickListener() {
-			public void onClick(final View view) {
-				// Set info button not clickable when it was first clicked
-				view.setClickable(false);
-				getActivity().runOnUiThread(new Runnable() {
-					@Override
-					public void run() {
-						final Handler handler = new Handler();
-						handler.postDelayed(new Runnable() {
-							@Override
-							public void run() {
-								view.setClickable(true);
-							}
-						}, 100);
 
-					}
-				});
-				ApptentiveInternal.getInstance().showAboutInternal(getActivity(), false);
-			}
-		});
-		scrollView = (ApptentiveNestedScrollView) view.findViewById(R.id.survey_scrollview);
-		scrollView.setOnScrollChangeListener(this);
+		try {
+			ImageButton infoButton = (ImageButton) view.findViewById(R.id.info);
+			infoButton.setOnClickListener(guarded(new View.OnClickListener() {
+				public void onClick(final View view) {
+					// Set info button not clickable when it was first clicked
+					view.setClickable(false);
+					getActivity().runOnUiThread(new Runnable() { // TODO: replace with DispatchQueue
+						@Override
+						public void run() {
+							final Handler handler = new Handler();
+							handler.postDelayed(new Runnable() { // TODO: replace with DispatchQueue
+								@Override
+								public void run() {
+									view.setClickable(true);
+								}
+							}, 100);
 
-		/* Android's ScrollView (when scrolled or fling'd) by default always set the focus to an EditText when
-		 * it's one of it's children.
-		 * The following is needed to change this behavior such that touching outside EditText would take
-		 * away the focus
-		 */
-		scrollView.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
-		scrollView.setFocusable(true);
-		scrollView.setFocusableInTouchMode(true);
-		scrollView.setOnTouchListener(new View.OnTouchListener() {
-			@Override
-			public boolean onTouch(View v, MotionEvent event) {
-				v.requestFocusFromTouch();
-				Util.hideSoftKeyboard(getContext(), v);
-				return false;
-			}
-		});
+						}
+					});
+					ApptentiveInternal.getInstance().showAboutInternal(getActivity(), false);
+				}
+			}));
+			scrollView = (ApptentiveNestedScrollView) view.findViewById(R.id.survey_scrollview);
+			scrollView.setOnScrollChangeListener(this);
 
-		getActivity().getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+			/* Android's ScrollView (when scrolled or fling'd) by default always set the focus to an EditText when
+			 * it's one of it's children.
+			 * The following is needed to change this behavior such that touching outside EditText would take
+			 * away the focus
+			 */
+			scrollView.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);
+			scrollView.setFocusable(true);
+			scrollView.setFocusableInTouchMode(true);
+			scrollView.setOnTouchListener(new View.OnTouchListener() {
+				@Override
+				public boolean onTouch(View v, MotionEvent event) {
+					v.requestFocusFromTouch();
+					Util.hideSoftKeyboard(getContext(), v);
+					return false;
+				}
+			});
 
+			getActivity().getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onViewCreated()", SurveyFragment.class.getSimpleName());
+			logException(e);
+		}
 	}
 
 	@Override
@@ -262,7 +279,7 @@ public class SurveyFragment extends ApptentiveBaseFragment<SurveyInteraction> im
 	public boolean validateAndUpdateState() {
 		boolean validationPassed = true;
 
-		List<Fragment> fragments = getRetainedChildFragmentManager().getFragments();
+		List<Fragment> fragments = getChildFragmentManager().getFragments();
 		for (Fragment fragment : fragments) {
 			SurveyQuestionView surveyQuestionView = (SurveyQuestionView) fragment;
 			answers.put(surveyQuestionView.getQuestionId(), surveyQuestionView.getAnswer());
@@ -276,7 +293,7 @@ public class SurveyFragment extends ApptentiveBaseFragment<SurveyInteraction> im
 	}
 
 	private Fragment getFirstRequiredQuestionPos() {
-		List<Fragment> fragments = getRetainedChildFragmentManager().getFragments();
+		List<Fragment> fragments = getChildFragmentManager().getFragments();
 		for (Fragment fragment : fragments) {
 			SurveyQuestionView surveyQuestionView = (SurveyQuestionView) fragment;
 			if (!surveyQuestionView.isValid()) {
@@ -291,15 +308,22 @@ public class SurveyFragment extends ApptentiveBaseFragment<SurveyInteraction> im
 		try {
 			answerData.put("id", questionId);
 		} catch (JSONException e) {
-			// Never happens.
+			logException(e);
 		}
 		engageInternal(EVENT_QUESTION_RESPONSE, answerData.toString());
 	}
 
 	private void callListener(boolean completed) {
-		OnSurveyFinishedListener listener = ApptentiveInternal.getInstance().getOnSurveyFinishedListener();
-		if (listener != null) {
-			listener.onSurveyFinished(completed);
+		assertMainThread();
+
+		try {
+			OnSurveyFinishedListener listener = ApptentiveInternal.getInstance().getOnSurveyFinishedListener();
+			if (listener != null) {
+				listener.onSurveyFinished(completed);
+			}
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception while calling listener");
+			logException(e);
 		}
 	}
 

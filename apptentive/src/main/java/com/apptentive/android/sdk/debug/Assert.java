@@ -1,5 +1,7 @@
 package com.apptentive.android.sdk.debug;
 
+import androidx.annotation.NonNull;
+
 import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.util.ObjectUtils;
 import com.apptentive.android.sdk.util.StringUtils;
@@ -19,7 +21,7 @@ public class Assert {
 	private static AssertImp imp = new AssertImp() {
 		@Override
 		public void assertFailed(String message) {
-			ApptentiveLog.e("Assertion failed: " + message + "\n" + getStackTrace(6));
+			ApptentiveLog.a("Assertion failed: " + message + "\n" + getStackTrace(6));
 		}
 	};
 
@@ -165,6 +167,12 @@ public class Assert {
 
 	//region Threading
 
+	public static void assertDispatchQueue(@NonNull DispatchQueue queue) {
+		if (imp != null && (queue == null || !queue.isCurrent())) {
+			imp.assertFailed(StringUtils.format("Expected '%s' queue but was '%s'", queue != null ? queue.getName() : "<missing queue>", Thread.currentThread().getName()));
+		}
+	}
+
 	/**
 	 * Asserts that code executes on the main thread.
 	 */
@@ -186,6 +194,13 @@ public class Assert {
 	//endregion
 
 	//region Failure
+
+	/**
+	 * General failure with a message
+	 */
+	public static void assertFail(String format, Object... args) {
+		assertFail(StringUtils.format(format, args));
+	}
 
 	/**
 	 * General failure with a message

@@ -12,6 +12,7 @@ import com.apptentive.android.sdk.Apptentive;
 import com.apptentive.android.sdk.ApptentiveInternal;
 import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.util.Constants;
+import com.apptentive.android.sdk.util.RuntimeUtils;
 import com.apptentive.android.sdk.util.Util;
 
 import org.json.JSONArray;
@@ -20,6 +21,9 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+
+import static com.apptentive.android.sdk.ApptentiveLogTag.CONVERSATION;
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
 
 /**
  * Stores version history in JSON, in SharedPreferences.
@@ -56,7 +60,8 @@ public class VersionHistoryStore {
 						versionHistoryEntries.add(entry);
 					}
 				} catch (Exception e) {
-					ApptentiveLog.w(e, "Error loading VersionHistoryStore.");
+					ApptentiveLog.w(CONVERSATION, e, "Error loading VersionHistoryStore.");
+					logException(e);
 				}
 			}
 		}
@@ -84,12 +89,13 @@ public class VersionHistoryStore {
 			// Only modify the store if the version hasn't been seen.
 			if (!exists) {
 				VersionHistoryEntry entry = new VersionHistoryEntry(newVersionCode, newVersionName, date);
-				ApptentiveLog.d("Adding Version History entry: %s", entry);
+				ApptentiveLog.v(CONVERSATION, "Adding Version History entry: %s", entry);
 				versionHistoryEntries.add(new VersionHistoryEntry(newVersionCode, newVersionName, date));
 				save();
 			}
 		} catch (Exception e) {
-			ApptentiveLog.w(e, "Error updating VersionHistoryStore.");
+			ApptentiveLog.w(CONVERSATION, e, "Error updating VersionHistoryStore.");
+			logException(e);
 		}
 	}
 
@@ -108,7 +114,7 @@ public class VersionHistoryStore {
 					// Since the list is ordered, this will be the first and oldest entry.
 					return new Apptentive.DateTime(entry.getTimestamp());
 				case version_code:
-					if (entry.getVersionCode() == Util.getAppVersionCode(ApptentiveInternal.getInstance().getApplicationContext())) {
+					if (entry.getVersionCode() == RuntimeUtils.getAppVersionCode(ApptentiveInternal.getInstance().getApplicationContext())) {
 						return new Apptentive.DateTime(entry.getTimestamp());
 					}
 					break;
@@ -116,7 +122,7 @@ public class VersionHistoryStore {
 					Apptentive.Version entryVersionName = new Apptentive.Version();
 					Apptentive.Version currentVersionName = new Apptentive.Version();
 					entryVersionName.setVersion(entry.getVersionName());
-					currentVersionName.setVersion(Util.getAppVersionName(ApptentiveInternal.getInstance().getApplicationContext()));
+					currentVersionName.setVersion(RuntimeUtils.getAppVersionName(ApptentiveInternal.getInstance().getApplicationContext()));
 					if (entryVersionName.equals(currentVersionName)) {
 						return new Apptentive.DateTime(entry.getTimestamp());
 					}

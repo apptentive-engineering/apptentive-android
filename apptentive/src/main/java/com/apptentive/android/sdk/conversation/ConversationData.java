@@ -6,12 +6,17 @@
 
 package com.apptentive.android.sdk.conversation;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import com.apptentive.android.sdk.debug.Assert;
 import com.apptentive.android.sdk.storage.AppRelease;
 import com.apptentive.android.sdk.storage.DataChangedListener;
 import com.apptentive.android.sdk.storage.Device;
+import com.apptentive.android.sdk.storage.DeviceDataChangedListener;
 import com.apptentive.android.sdk.storage.EventData;
 import com.apptentive.android.sdk.storage.Person;
+import com.apptentive.android.sdk.storage.PersonDataChangedListener;
 import com.apptentive.android.sdk.storage.Saveable;
 import com.apptentive.android.sdk.storage.Sdk;
 import com.apptentive.android.sdk.storage.VersionHistory;
@@ -19,7 +24,7 @@ import com.apptentive.android.sdk.util.StringUtils;
 
 import java.util.UUID;
 
-public class ConversationData implements Saveable, DataChangedListener {
+public class ConversationData implements Saveable, DataChangedListener, DeviceDataChangedListener, PersonDataChangedListener {
 
 	private static final long serialVersionUID = 1L;
 	private String localIdentifier;
@@ -55,12 +60,24 @@ public class ConversationData implements Saveable, DataChangedListener {
 	//region Listeners
 
 	private transient DataChangedListener listener;
+	private transient PersonDataChangedListener personDataListener;
+	private transient DeviceDataChangedListener deviceDataListener;
+
+	public void setPersonDataListener(PersonDataChangedListener personDataListener) {
+		this.personDataListener = personDataListener;
+	}
+
+	public void setDeviceDataListener(DeviceDataChangedListener deviceDataListener) {
+		this.deviceDataListener = deviceDataListener;
+	}
 
 	@Override
 	public void setDataChangedListener(DataChangedListener listener) {
 		this.listener = listener;
 		device.setDataChangedListener(this);
+		device.setDeviceDataChangedListener(this);
 		person.setDataChangedListener(this);
+		person.setPersonDataChangedListener(this);
 		eventData.setDataChangedListener(this);
 		versionHistory.setDataChangedListener(this);
 	}
@@ -76,6 +93,21 @@ public class ConversationData implements Saveable, DataChangedListener {
 	public void onDataChanged() {
 		notifyDataChanged();
 	}
+
+	@Override
+	public void onDeviceDataChanged() {
+		if (deviceDataListener != null) {
+			deviceDataListener.onDeviceDataChanged();
+		}
+	}
+
+	@Override
+	public void onPersonDataChanged() {
+		if (personDataListener != null) {
+			personDataListener.onPersonDataChanged();
+		}
+	}
+
 	//endregion
 
 	//region Getters & Setters
@@ -110,14 +142,15 @@ public class ConversationData implements Saveable, DataChangedListener {
 		}
 	}
 
-	public Device getDevice() {
+	public @NonNull Device getDevice() {
 		return device;
 	}
 
-	public void setDevice(Device device) {
+	public void setDevice(@NonNull Device device) {
 		Assert.assertNotNull(device, "Device may not be null.");
 		this.device = device;
 		device.setDataChangedListener(this);
+		device.setDeviceDataChangedListener(this);
 		notifyDataChanged();
 	}
 
@@ -131,14 +164,15 @@ public class ConversationData implements Saveable, DataChangedListener {
 		notifyDataChanged();
 	}
 
-	public Person getPerson() {
+	public @NonNull Person getPerson() {
 		return person;
 	}
 
-	public void setPerson(Person person) {
+	public void setPerson(@NonNull Person person) {
 		Assert.assertNotNull(person, "Person may not be null.");
 		this.person = person;
 		this.person.setDataChangedListener(this);
+		this.person.setPersonDataChangedListener(this);
 		notifyDataChanged();
 	}
 
@@ -274,6 +308,14 @@ public class ConversationData implements Saveable, DataChangedListener {
 			this.interactionExpiration = interactionExpiration;
 			notifyDataChanged();
 		}
+	}
+
+	public @Nullable String getMParticleId() {
+		return getPerson().getMParticleId();
+	}
+
+	public void setMParticleId(@Nullable String mParticleId) {
+		getPerson().setMParticleId(mParticleId);
 	}
 
 	//endregion

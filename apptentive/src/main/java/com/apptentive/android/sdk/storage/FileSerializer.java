@@ -6,6 +6,8 @@
 
 package com.apptentive.android.sdk.storage;
 
+import androidx.core.util.AtomicFile;
+
 import com.apptentive.android.sdk.util.Util;
 
 import java.io.ByteArrayOutputStream;
@@ -29,7 +31,18 @@ public class FileSerializer implements Serializer {
 	@Override
 	public void serialize(Object object) throws SerializerException {
 		file.getParentFile().mkdirs();
-		serialize(file, object);
+
+		AtomicFile atomicFile = new AtomicFile(file);
+		FileOutputStream stream = null;
+		try {
+			stream = atomicFile.startWrite();
+			serialize(stream, object);
+			atomicFile.finishWrite(stream);
+		} catch (Exception e) {
+			atomicFile.failWrite(stream);
+			throw new SerializerException(e);
+		}
+
 	}
 
 	@Override
@@ -37,20 +50,14 @@ public class FileSerializer implements Serializer {
 		return deserialize(file);
 	}
 
-	protected void serialize(File file, Object object) throws SerializerException {
-		ByteArrayOutputStream bos;
+	protected void serialize(FileOutputStream stream, Object object) throws Exception {
 		ObjectOutputStream oos = null;
-		FileOutputStream fos = null;
 		try {
-			bos = new ByteArrayOutputStream();
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
 			oos = new ObjectOutputStream(bos);
 			oos.writeObject(object);
-			fos = new FileOutputStream(file);
-			fos.write(bos.toByteArray());
-		} catch (Exception e) {
-			throw new SerializerException(e);
+			stream.write(bos.toByteArray());
 		} finally {
-			Util.ensureClosed(fos);
 			Util.ensureClosed(oos);
 		}
 	}
@@ -60,7 +67,7 @@ public class FileSerializer implements Serializer {
 		ObjectInputStream ois = null;
 		try {
 			fis = new FileInputStream(file);
-			ois = new ObjectInputStream(fis);
+			ois = new OverrideSerialVersionUIDObjectInputStream(fis);
 			return ois.readObject();
 		} catch (Exception e) {
 			throw new SerializerException(e);

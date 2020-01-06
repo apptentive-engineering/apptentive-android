@@ -8,15 +8,17 @@ package com.apptentive.android.sdk.conversation;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.apptentive.android.sdk.Apptentive;
 import com.apptentive.android.sdk.ApptentiveInternal;
 import com.apptentive.android.sdk.ApptentiveLog;
-import com.apptentive.android.sdk.ApptentiveNotifications;
-import com.apptentive.android.sdk.comm.ApptentiveClient;
-import com.apptentive.android.sdk.comm.ApptentiveHttpResponse;
-import com.apptentive.android.sdk.debug.Assert;
+import com.apptentive.android.sdk.Encryption;
+import com.apptentive.android.sdk.comm.ApptentiveHttpClient;
+import com.apptentive.android.sdk.debug.ErrorMetrics;
 import com.apptentive.android.sdk.model.DevicePayload;
+import com.apptentive.android.sdk.model.EventPayload;
 import com.apptentive.android.sdk.model.Payload;
 import com.apptentive.android.sdk.model.PersonPayload;
 import com.apptentive.android.sdk.module.engagement.interaction.model.Interaction;
@@ -24,17 +26,21 @@ import com.apptentive.android.sdk.module.engagement.interaction.model.Interactio
 import com.apptentive.android.sdk.module.engagement.interaction.model.Interactions;
 import com.apptentive.android.sdk.module.engagement.interaction.model.Targets;
 import com.apptentive.android.sdk.module.messagecenter.MessageManager;
+import com.apptentive.android.sdk.network.HttpJsonRequest;
+import com.apptentive.android.sdk.network.HttpRequest;
 import com.apptentive.android.sdk.notifications.ApptentiveNotificationCenter;
 import com.apptentive.android.sdk.storage.AppRelease;
 import com.apptentive.android.sdk.storage.DataChangedListener;
 import com.apptentive.android.sdk.storage.Device;
-import com.apptentive.android.sdk.storage.DeviceManager;
+import com.apptentive.android.sdk.storage.DeviceDataChangedListener;
+import com.apptentive.android.sdk.storage.DevicePayloadDiff;
 import com.apptentive.android.sdk.storage.EncryptedFileSerializer;
 import com.apptentive.android.sdk.storage.EventData;
 import com.apptentive.android.sdk.storage.FileSerializer;
 import com.apptentive.android.sdk.storage.IntegrationConfig;
 import com.apptentive.android.sdk.storage.IntegrationConfigItem;
 import com.apptentive.android.sdk.storage.Person;
+import com.apptentive.android.sdk.storage.PersonDataChangedListener;
 import com.apptentive.android.sdk.storage.PersonManager;
 import com.apptentive.android.sdk.storage.Sdk;
 import com.apptentive.android.sdk.storage.SerializerException;
@@ -44,23 +50,27 @@ import com.apptentive.android.sdk.util.Destroyable;
 import com.apptentive.android.sdk.util.RuntimeUtils;
 import com.apptentive.android.sdk.util.StringUtils;
 import com.apptentive.android.sdk.util.Util;
-import com.apptentive.android.sdk.util.threading.DispatchQueue;
 import com.apptentive.android.sdk.util.threading.DispatchTask;
 
 import org.json.JSONException;
 
 import java.io.File;
+import java.util.UUID;
 
+import static com.apptentive.android.sdk.ApptentiveHelper.checkConversationQueue;
+import static com.apptentive.android.sdk.ApptentiveHelper.conversationDataQueue;
+import static com.apptentive.android.sdk.ApptentiveHelper.conversationQueue;
+import static com.apptentive.android.sdk.ApptentiveLog.hideIfSanitized;
 import static com.apptentive.android.sdk.ApptentiveNotifications.*;
-import static com.apptentive.android.sdk.debug.Assert.assertFail;
 import static com.apptentive.android.sdk.debug.Assert.assertNotNull;
+import static com.apptentive.android.sdk.debug.Assert.assertNull;
 import static com.apptentive.android.sdk.debug.Assert.notNull;
-import static com.apptentive.android.sdk.debug.Tester.dispatchDebugEvent;
 import static com.apptentive.android.sdk.ApptentiveLogTag.*;
 import static com.apptentive.android.sdk.conversation.ConversationState.*;
-import static com.apptentive.android.sdk.debug.TesterEvent.*;
 
-public class Conversation implements DataChangedListener, Destroyable {
+public class Conversation implements DataChangedListener, Destroyable, DeviceDataChangedListener, PersonDataChangedListener {
+
+	private static final String TAG_FETCH_INTERACTIONS_REQUEST = "fetch_interactions";
 
 	/**
 	 * Conversation data for this class to manage
@@ -68,9 +78,16 @@ public class Conversation implements DataChangedListener, Destroyable {
 	private ConversationData conversationData;
 
 	/**
-	 * Encryption key for payloads. A hex encoded String.
+	 * Encryption for storing conversation data on disk.
 	 */
-	private String encryptionKey;
+	private @NonNull Encryption encryption;
+
+	/**
+	 * Payload encryption key (received from the backend). This would be missing for anonymous conversations.
+	 * NOTE: we store the hex key separately in order to be able to update the corresponding conversation
+	 * metadata item.
+	 */
+	private @Nullable String payloadEncryptionKey;
 
 	/**
 	 * Optional user id for logged-in conversations
@@ -78,9 +95,9 @@ public class Conversation implements DataChangedListener, Destroyable {
 	private String userId;
 
 	/**
-	 * Optional JWT for active conversations
+	 * Unique session id for tracking all the events for a single app launch
 	 */
-	private String JWT;
+	private @Nullable String sessionId;
 
 	/**
 	 * File which represents serialized conversation data on the disk
@@ -97,28 +114,20 @@ public class Conversation implements DataChangedListener, Destroyable {
 	 */
 	private Boolean pollForInteractions;
 
+	/**
+	 * Current conversation state
+	 */
 	private ConversationState state = ConversationState.UNDEFINED;
+
+	/**
+	 * Cached conversation state for better transition tracking
+	 */
+	private ConversationState prevState = ConversationState.UNDEFINED;
 
 	private final MessageManager messageManager;
 
-	// we keep references to the tasks in order to dispatch them only once
-	private final DispatchTask fetchInteractionsTask = new DispatchTask() {
-		@Override
-		protected void execute() {
-			final boolean updateSuccessful = fetchInteractionsSync();
-			dispatchDebugEvent(EVT_CONVERSATION_FETCH_INTERACTIONS, updateSuccessful);
-
-			// Update pending state on UI thread after finishing the task
-			DispatchQueue.mainQueue().dispatchAsync(new DispatchTask() {
-				@Override
-				protected void execute() {
-					if (hasActiveState()) {
-						ApptentiveInternal.getInstance().notifyInteractionUpdated(updateSuccessful);
-					}
-				}
-			});
-		}
-	};
+	// we keep a reference to the message store in order to update encryption key (not the best solution but works for now)
+	private final FileMessageStore messageStore;
 
 	// we keep references to the tasks in order to dispatch them only once
 	private final DispatchTask saveConversationTask = new DispatchTask() {
@@ -127,42 +136,69 @@ public class Conversation implements DataChangedListener, Destroyable {
 			try {
 				saveConversationData();
 			} catch (Exception e) {
-				ApptentiveLog.e(e, "Exception while saving conversation data");
+				ApptentiveLog.e(CONVERSATION, e, "Exception while saving conversation data");
+				logException(e);
 			}
 		}
 	};
 
-	public Conversation(File conversationDataFile, File conversationMessagesFile) {
+	/**
+	 * @param conversationDataFile     - file for storing serialized conversation data
+	 * @param conversationMessagesFile - file for storing serialized conversation messages
+	 * @param encryption               - encryption object for encrypting data, messages and logged-in payloads
+	 * @param payloadEncryptionKey     - hex key used for creating the encryption object for the logged-in conversation. Would be <code>null</code> for anonymous conversations
+	 */
+	public Conversation(File conversationDataFile, File conversationMessagesFile, @NonNull Encryption encryption, @Nullable String payloadEncryptionKey) {
 		if (conversationDataFile == null) {
 			throw new IllegalArgumentException("Data file is null");
 		}
 		if (conversationMessagesFile == null) {
 			throw new IllegalArgumentException("Messages file is null");
 		}
+		if (encryption == null) {
+			throw new IllegalArgumentException("Encryption is null");
+		}
 
 		this.conversationDataFile = conversationDataFile;
 		this.conversationMessagesFile = conversationMessagesFile;
+		this.encryption = encryption;
+		this.payloadEncryptionKey = payloadEncryptionKey;
 
 		conversationData = new ConversationData();
 
-		FileMessageStore messageStore = new FileMessageStore(conversationMessagesFile);
+		messageStore = new FileMessageStore(conversationMessagesFile, encryption);
+		messageStore.migrateLegacyStorage();
 		messageManager = new MessageManager(this, messageStore); // it's important to initialize message manager in a constructor since other SDK parts depend on it via Apptentive singleton
 	}
 
 	public void startListeningForChanges() {
 		conversationData.setDataChangedListener(this);
+		conversationData.setPersonDataListener(this);
+		conversationData.setDeviceDataListener(this);
 	}
 
 	//region Payloads
 
 	public void addPayload(Payload payload) {
+		// TODO: figure out a better way of detecting new events
+		if (payload instanceof EventPayload) {
+			notifyEventGenerated((EventPayload) payload);
+		}
+
 		payload.setLocalConversationIdentifier(notNull(getLocalIdentifier()));
 		payload.setConversationId(getConversationId());
 		payload.setToken(getConversationToken());
-		payload.setEncryptionKey(getEncryptionKey());
+		payload.setEncryption(getEncryption());
+		payload.setAuthenticated(isAuthenticated());
+		payload.setSessionId(getSessionId());
 
 		// TODO: don't use singleton here
 		ApptentiveInternal.getInstance().getApptentiveTaskManager().addPayload(payload);
+	}
+
+	private void notifyEventGenerated(EventPayload payload) {
+		ApptentiveNotificationCenter.defaultCenter()
+			.postNotification(NOTIFICATION_EVENT_GENERATED, NOTIFICATION_KEY_EVENT, payload);
 	}
 
 	//endregion
@@ -172,12 +208,12 @@ public class Conversation implements DataChangedListener, Destroyable {
 	/**
 	 * Returns an Interaction for <code>eventLabel</code> if there is one that can be displayed.
 	 */
-	public Interaction getApplicableInteraction(String eventLabel) {
+	public Interaction getApplicableInteraction(String eventLabel, boolean verbose) {
 		String targetsString = getTargets();
 		if (targetsString != null) {
 			try {
 				Targets targets = new Targets(getTargets());
-				String interactionId = targets.getApplicableInteraction(eventLabel);
+				String interactionId = targets.getApplicableInteraction(eventLabel, verbose);
 				if (interactionId != null) {
 					String interactionsString = getInteractions();
 					if (interactionsString != null) {
@@ -186,74 +222,94 @@ public class Conversation implements DataChangedListener, Destroyable {
 					}
 				}
 			} catch (JSONException e) {
-				ApptentiveLog.e(e, "Exception while getting applicable interaction: %s", eventLabel);
+				ApptentiveLog.e(INTERACTIONS, e, "Exception while getting applicable interaction: %s", eventLabel);
+				logException(e);
 			}
 		}
 		return null;
 	}
 
-	boolean fetchInteractions(Context context) {
+	public void fetchInteractions(Context context) {
+		if (!isPollForInteractions()) {
+			ApptentiveLog.d(CONVERSATION, "Interaction polling is turned off. Skipping fetch.");
+			return;
+		}
 		boolean cacheExpired = getInteractionExpiration() < Util.currentTimeSeconds();
 		if (cacheExpired || RuntimeUtils.isAppDebuggable(context)) {
-			return DispatchQueue.backgroundQueue().dispatchAsyncOnce(fetchInteractionsTask); // do not allow multiple fetches at the same time
-		}
+			ApptentiveHttpClient httpClient = ApptentiveInternal.getInstance().getApptentiveHttpClient();
+			HttpRequest existing = httpClient.findRequest(TAG_FETCH_INTERACTIONS_REQUEST);
+			if (existing == null) {
+				HttpJsonRequest request = httpClient.createFetchInteractionsRequest(getConversationToken(), getConversationId(), new HttpRequest.Listener<HttpJsonRequest>() {
+					@Override
+					public void onFinish(HttpJsonRequest request) {
+						// Send a notification so other parts of the SDK can use this data for troubleshooting
+						ApptentiveNotificationCenter.defaultCenter()
+							.postNotification(NOTIFICATION_INTERACTION_MANIFEST_FETCHED, NOTIFICATION_KEY_MANIFEST, request.getResponseData());
 
-		ApptentiveLog.v(CONVERSATION, "Interaction cache is still valid");
-		return false;
-	}
+						// Store new integration cache expiration.
+						String cacheControl = request.getResponseHeader("Cache-Control");
+						Integer cacheSeconds = Util.parseCacheControlHeader(cacheControl);
+						if (cacheSeconds == null) {
+							cacheSeconds = Constants.CONFIG_DEFAULT_INTERACTION_CACHE_EXPIRATION_DURATION_SECONDS;
+						}
+						setInteractionExpiration(Util.currentTimeSeconds() + cacheSeconds);
+						try {
+							InteractionManifest payload = new InteractionManifest(request.getResponseData());
+							Interactions interactions = payload.getInteractions();
+							Targets targets = payload.getTargets();
+							if (interactions != null && targets != null) {
+								setTargets(targets.toString());
+								setInteractions(interactions.toString());
+							} else {
+								ApptentiveLog.e(CONVERSATION, "Unable to save interactionManifest.");
+							}
+						} catch (JSONException e) {
+							ApptentiveLog.e(CONVERSATION, e, "Invalid InteractionManifest received.");
+							logException(e);
+						}
+						ApptentiveLog.v(CONVERSATION, "Fetching new Interactions task finished");
 
-	/**
-	 * Fetches interaction synchronously. Returns <code>true</code> if succeed.
-	 */
-	private boolean fetchInteractionsSync() {
-		ApptentiveLog.v(CONVERSATION, "Fetching Interactions");
-		ApptentiveHttpResponse response = ApptentiveClient.getInteractions(getConversationToken(), getConversationId());
+						// Notify the SDK
+						notifyFinish(true);
+					}
 
-		SharedPreferences prefs = ApptentiveInternal.getInstance().getGlobalSharedPrefs();
-		boolean updateSuccessful = true;
+					@Override
+					public void onCancel(HttpJsonRequest request) {
+					}
 
-		// We weren't able to connect to the internet.
-		if (response.isException()) {
-			prefs.edit().putBoolean(Constants.PREF_KEY_MESSAGE_CENTER_SERVER_ERROR_LAST_ATTEMPT, false).apply();
-			updateSuccessful = false;
-		}
-		// We got a server error.
-		else if (!response.isSuccessful()) {
-			prefs.edit().putBoolean(Constants.PREF_KEY_MESSAGE_CENTER_SERVER_ERROR_LAST_ATTEMPT, true).apply();
-			updateSuccessful = false;
-		}
+					@Override
+					public void onFail(HttpJsonRequest request, String reason) {
+						SharedPreferences prefs = ApptentiveInternal.getInstance().getGlobalSharedPrefs();
 
-		if (updateSuccessful) {
-			String interactionsPayloadString = response.getContent();
+						// We weren't able to connect to the internet.
+						if (request.getResponseCode() == -1) {
+							prefs.edit().putBoolean(Constants.PREF_KEY_MESSAGE_CENTER_SERVER_ERROR_LAST_ATTEMPT, false).apply();
+						}
+						// We got a server error.
+						else {
+							prefs.edit().putBoolean(Constants.PREF_KEY_MESSAGE_CENTER_SERVER_ERROR_LAST_ATTEMPT, true).apply();
+						}
 
-			// Send a notification so other parts of the SDK can use this data for troubleshooting
-			ApptentiveNotificationCenter.defaultCenter()
-					.postNotification(NOTIFICATION_INTERACTION_MANIFEST_FETCHED, NOTIFICATION_KEY_MANIFEST, interactionsPayloadString);
+						ApptentiveLog.w(CONVERSATION, "Fetching new Interactions task failed");
 
-			// Store new integration cache expiration.
-			String cacheControl = response.getHeaders().get("Cache-Control");
-			Integer cacheSeconds = Util.parseCacheControlHeader(cacheControl);
-			if (cacheSeconds == null) {
-				cacheSeconds = Constants.CONFIG_DEFAULT_INTERACTION_CACHE_EXPIRATION_DURATION_SECONDS;
+						// Notify the SDK
+						notifyFinish(false);
+					}
+
+					private void notifyFinish(final boolean successful) {
+						if (hasActiveState()) {
+							ApptentiveInternal.getInstance().notifyInteractionUpdated(successful);
+						}
+					}
+
+				});
+				request.setTag(TAG_FETCH_INTERACTIONS_REQUEST);
+				request.setCallbackQueue(conversationQueue());
+				request.start();
 			}
-			setInteractionExpiration(Util.currentTimeSeconds() + cacheSeconds);
-			try {
-				InteractionManifest payload = new InteractionManifest(interactionsPayloadString);
-				Interactions interactions = payload.getInteractions();
-				Targets targets = payload.getTargets();
-				if (interactions != null && targets != null) {
-					setTargets(targets.toString());
-					setInteractions(interactions.toString());
-				} else {
-					ApptentiveLog.e(CONVERSATION, "Unable to save interactionManifest.");
-				}
-			} catch (JSONException e) {
-				ApptentiveLog.e(e, "Invalid InteractionManifest received.");
-			}
+		} else {
+			ApptentiveLog.v(CONVERSATION, "Interaction cache is still valid");
 		}
-		ApptentiveLog.v(CONVERSATION, "Fetching new Interactions task finished. Successful: %b", updateSuccessful);
-
-		return updateSuccessful;
 	}
 
 	public boolean isPollForInteractions() {
@@ -282,11 +338,41 @@ public class Conversation implements DataChangedListener, Destroyable {
 				setTargets(targets.toString());
 				setInteractions(interactions.toString());
 			} else {
-				ApptentiveLog.e("Unable to save InteractionManifest.");
+				ApptentiveLog.e(CONVERSATION, "Unable to save InteractionManifest.");
 			}
 		} catch (JSONException e) {
-			ApptentiveLog.w("Invalid InteractionManifest received.");
+			ApptentiveLog.w(CONVERSATION, "Invalid InteractionManifest received.");
+			logException(e);
 		}
+	}
+
+	//endregion
+
+	//region Session
+
+	public void startSession() {
+		assertNull(sessionId, "Another session is active");
+		sessionId = generateSessionId();
+		ApptentiveLog.d(CONVERSATION, "Started session '%s'", sessionId);
+	}
+
+	public void endSession() {
+		assertNotNull(sessionId, "Session was not started");
+		ApptentiveLog.d(CONVERSATION, "Ended session '%s'", sessionId);
+		sessionId = null;
+	}
+
+	public boolean hasSession() {
+		return !StringUtils.isNullOrEmpty(sessionId);
+	}
+
+	public @Nullable String getSessionId() {
+		return sessionId;
+	}
+
+	private static String generateSessionId() {
+		String randomUUID = UUID.randomUUID().toString().replace("-", "");
+		return randomUUID.length() > 32 ? randomUUID.substring(0, 32) : randomUUID;
 	}
 
 	//endregion
@@ -294,9 +380,9 @@ public class Conversation implements DataChangedListener, Destroyable {
 	//region Saving
 
 	public void scheduleSaveConversationData() {
-		boolean scheduled = DispatchQueue.backgroundQueue().dispatchAsyncOnce(saveConversationTask, 100L);
+		boolean scheduled = conversationDataQueue().dispatchAsyncOnce(saveConversationTask);
 		if (scheduled) {
-			ApptentiveLog.d(CONVERSATION, "Scheduling conversation save.");
+			ApptentiveLog.v(CONVERSATION, "Scheduling conversation save.");
 		} else {
 			ApptentiveLog.d(CONVERSATION, "Conversation save already scheduled.");
 		}
@@ -307,37 +393,48 @@ public class Conversation implements DataChangedListener, Destroyable {
 	 * if succeed.
 	 */
 	private synchronized void saveConversationData() throws SerializerException {
-		if (ApptentiveLog.canLog(ApptentiveLog.Level.VERY_VERBOSE)) {
-			ApptentiveLog.vv(CONVERSATION, "Saving %sconversation data...", hasState(LOGGED_IN) ? "encrypted " : "");
-			ApptentiveLog.vv(CONVERSATION, "EventData: %s", getEventData().toString());
-			ApptentiveLog.vv(CONVERSATION, "Messages: %s", messageManager.getMessageStore().toString());
+		if (ApptentiveLog.canLog(ApptentiveLog.Level.VERBOSE)) {
+			ApptentiveLog.v(CONVERSATION, "Saving conversation data...");
+			ApptentiveLog.v(CONVERSATION, "EventData: %s", getEventData().toString());
+			ApptentiveLog.v(CONVERSATION, "Messages: %s", messageManager.getMessageStore().toString());
 		}
 		long start = System.currentTimeMillis();
 
-		FileSerializer serializer;
-		if (!StringUtils.isNullOrEmpty(encryptionKey)) {
-			Assert.assertFalse(hasState(ANONYMOUS, ANONYMOUS_PENDING, LEGACY_PENDING));
-			serializer = new EncryptedFileSerializer(conversationDataFile, encryptionKey);
-		} else {
-			Assert.assertTrue(hasState(ANONYMOUS, ANONYMOUS_PENDING, LEGACY_PENDING), "Unexpected conversation state: %s", getState());
-			serializer = new FileSerializer(conversationDataFile);
-		}
-
+		FileSerializer serializer = new EncryptedFileSerializer(conversationDataFile, encryption);
 		serializer.serialize(conversationData);
-		ApptentiveLog.vv(CONVERSATION, "Conversation data saved (took %d ms)", System.currentTimeMillis() - start);
+		ApptentiveLog.v(CONVERSATION, "Conversation data saved (took %d ms)", System.currentTimeMillis() - start);
 	}
 
-	synchronized void loadConversationData() throws SerializerException {
+	/**
+	 * Attempts to migrate from the legacy clear text format.
+	 *
+	 * @return <code>false</code> if failed.
+	 */
+	boolean migrateConversationData() throws SerializerException {
 		long start = System.currentTimeMillis();
-
-		FileSerializer serializer;
-		if (!StringUtils.isNullOrEmpty(encryptionKey)) {
-			serializer = new EncryptedFileSerializer(conversationDataFile, encryptionKey);
-		} else {
-			serializer = new FileSerializer(conversationDataFile);
+		File legacyConversationDataFile = Util.getUnencryptedFilename(conversationDataFile);
+		if (legacyConversationDataFile.exists()) {
+			try {
+				ApptentiveLog.d(CONVERSATION, "Migrating %sconversation data...", hasState(LOGGED_IN) ? "encrypted " : "");
+				FileSerializer serializer = isAuthenticated() ? new EncryptedFileSerializer(legacyConversationDataFile, getEncryption()) :
+					                            new FileSerializer(legacyConversationDataFile);
+				conversationData = (ConversationData) serializer.deserialize();
+				ApptentiveLog.d(CONVERSATION, "Conversation data migrated (took %d ms)", System.currentTimeMillis() - start);
+				return true;
+			} finally {
+				boolean deleted = legacyConversationDataFile.delete();
+				ApptentiveLog.d(CONVERSATION, "Legacy conversation file deleted: %b", deleted);
+			}
 		}
 
-		ApptentiveLog.d(CONVERSATION, "Loading %sconversation data...", hasState(LOGGED_IN) ? "encrypted " : "");
+		return false;
+	}
+
+	void loadConversationData() throws SerializerException {
+		long start = System.currentTimeMillis();
+
+		FileSerializer serializer = new EncryptedFileSerializer(conversationDataFile, encryption);
+		ApptentiveLog.d(CONVERSATION, "Loading conversation data...");
 		conversationData = (ConversationData) serializer.deserialize();
 		ApptentiveLog.d(CONVERSATION, "Conversation data loaded (took %d ms)", System.currentTimeMillis() - start);
 	}
@@ -348,7 +445,29 @@ public class Conversation implements DataChangedListener, Destroyable {
 
 	@Override
 	public void onDataChanged() {
+		notifyDataChanged();
 		scheduleSaveConversationData();
+	}
+
+	@Override
+	public void onDeviceDataChanged() {
+		notifyDataChanged();
+		scheduleDeviceUpdate();
+	}
+
+	@Override
+	public void onPersonDataChanged() {
+		notifyDataChanged();
+		schedulePersonUpdate();
+	}
+
+	//endregion
+
+	//region Notifications
+
+	private void notifyDataChanged() {
+		ApptentiveNotificationCenter.defaultCenter()
+			.postNotification(NOTIFICATION_CONVERSATION_DATA_DID_CHANGE, NOTIFICATION_KEY_CONVERSATION, this);
 	}
 
 	//endregion
@@ -367,6 +486,8 @@ public class Conversation implements DataChangedListener, Destroyable {
 	private final DispatchTask personUpdateTask = new DispatchTask() {
 		@Override
 		protected void execute() {
+			checkConversationQueue();
+
 			Person lastSentPerson = getLastSentPerson();
 			Person currentPerson = getPerson();
 			assertNotNull(currentPerson, "Current person object is null");
@@ -381,10 +502,12 @@ public class Conversation implements DataChangedListener, Destroyable {
 	private final DispatchTask deviceUpdateTask = new DispatchTask() {
 		@Override
 		protected void execute() {
+			checkConversationQueue();
+
 			Device lastSentDevice = getLastSentDevice();
 			Device currentDevice = getDevice();
 			assertNotNull(currentDevice, "Current device object is null");
-			DevicePayload devicePayload = DeviceManager.getDiffPayload(lastSentDevice, currentDevice);
+			DevicePayload devicePayload = DevicePayloadDiff.getDiffPayload(lastSentDevice, currentDevice);
 			if (devicePayload != null) {
 				addPayload(devicePayload);
 				setLastSentDevice(currentDevice != null ? currentDevice.clone() : null);
@@ -392,12 +515,20 @@ public class Conversation implements DataChangedListener, Destroyable {
 		}
 	};
 
-	public void schedulePersonUpdate() {
-		DispatchQueue.mainQueue().dispatchAsyncOnce(personUpdateTask);
+	private void schedulePersonUpdate() {
+		conversationQueue().dispatchAsyncOnce(personUpdateTask);
 	}
 
-	public void scheduleDeviceUpdate() {
-		DispatchQueue.mainQueue().dispatchAsyncOnce(deviceUpdateTask);
+	private void scheduleDeviceUpdate() {
+		conversationQueue().dispatchAsyncOnce(deviceUpdateTask);
+	}
+
+	//endregion
+
+	//region Error Reporting
+
+	private void logException(Exception e) {
+		ErrorMetrics.logException(e); // TODO: add more context info
 	}
 
 	//endregion
@@ -412,8 +543,13 @@ public class Conversation implements DataChangedListener, Destroyable {
 		return state;
 	}
 
+	public ConversationState getPrevState() {
+		return prevState;
+	}
+
 	public void setState(ConversationState state) {
 		// TODO: check if state transition would make sense (for example you should not be able to move from 'logged' state to 'anonymous', etc.)
+		this.prevState = this.state;
 		this.state = state;
 	}
 
@@ -434,6 +570,13 @@ public class Conversation implements DataChangedListener, Destroyable {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Returns true if this conversation belongs to a logged-in user.
+	 */
+	public boolean isAuthenticated() {
+		return hasState(LOGGED_IN);
 	}
 
 	/**
@@ -587,9 +730,17 @@ public class Conversation implements DataChangedListener, Destroyable {
 		getConversationData().setInteractionExpiration(interactionExpiration);
 	}
 
+	public @Nullable String getMParticleId() {
+		return getConversationData().getMParticleId();
+	}
+
+	public void setMParticleId(@Nullable String mParticleId) {
+		getConversationData().setMParticleId(mParticleId);
+	}
+
 	// this is a synchronization hack: both save/load conversation data are synchronized so we can't
 	// modify conversation data while it's being serialized/deserialized
-	private synchronized ConversationData getConversationData() {
+	private synchronized @NonNull ConversationData getConversationData() {
 		return conversationData;
 	}
 
@@ -597,23 +748,37 @@ public class Conversation implements DataChangedListener, Destroyable {
 		return messageManager;
 	}
 
-	synchronized File getConversationDataFile() {
+	public synchronized File getConversationDataFile() {
 		return conversationDataFile;
 	}
 
-	synchronized File getConversationMessagesFile() {
+	public synchronized File getConversationMessagesFile() {
 		return conversationMessagesFile;
 	}
 
-	public String getEncryptionKey() {
-		return encryptionKey;
+	public void setEncryption(@NonNull Encryption encryption) {
+		if (encryption == null) {
+			throw new IllegalArgumentException("Encryption is null");
+		}
+		this.encryption = encryption;
+
+		// we need to update the old message store encryption key and overwrite current data file
+		messageStore.updateEncryption(encryption);
 	}
 
-	void setEncryptionKey(String encryptionKey) {
-		this.encryptionKey = encryptionKey;
+	public void setPayloadEncryptionKey(@Nullable String payloadEncryptionKey) {
+		this.payloadEncryptionKey = payloadEncryptionKey;
 	}
 
-	String getUserId() {
+	public @NonNull Encryption getEncryption() {
+		return encryption;
+	}
+
+	public @Nullable String getPayloadEncryptionKey() {
+		return payloadEncryptionKey;
+	}
+
+	public String getUserId() {
 		return userId;
 	}
 
@@ -640,31 +805,43 @@ public class Conversation implements DataChangedListener, Destroyable {
 				integrationConfig.setAmazonAwsSns(item);
 				break;
 			default:
-				ApptentiveLog.e("Invalid pushProvider: %d", pushProvider);
+				ApptentiveLog.e(CONVERSATION, "Invalid pushProvider: %d", pushProvider);
 				break;
 		}
-		scheduleDeviceUpdate();
 	}
 
 	/**
 	 * Checks the internal consistency of the conversation object (temporary solution)
 	 */
 	void checkInternalConsistency() throws IllegalStateException {
+		if (encryption == null) {
+			throw new IllegalStateException("Missing encryption");
+		}
+
 		switch (state) {
 			case LOGGED_IN:
-				if (StringUtils.isNullOrEmpty(encryptionKey)) {
-					assertFail("Missing encryption key");
-					throw new IllegalStateException("Missing encryption key");
-				}
 				if (StringUtils.isNullOrEmpty(userId)) {
-					assertFail("Missing user id");
 					throw new IllegalStateException("Missing user id");
 				}
+				if (StringUtils.isNullOrEmpty(payloadEncryptionKey)) {
+					throw new IllegalStateException("Missing payload encryption key");
+				}
 				break;
+			case LOGGED_OUT:
+				throw new IllegalStateException("Invalid conversation state: " + state);
 			default:
 				break;
 		}
 	}
 
 	//endregion
+
+	@Override
+	public String toString() {
+		return StringUtils.format("Conversation: localId=%s id=%s state=%s token=%s",
+			getLocalIdentifier(),
+			getConversationId(),
+			getState(),
+			hideIfSanitized(getConversationToken()));
+	}
 }

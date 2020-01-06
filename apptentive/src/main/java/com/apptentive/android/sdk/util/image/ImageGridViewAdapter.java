@@ -9,8 +9,6 @@ package com.apptentive.android.sdk.util.image;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.os.Environment;
-import android.support.v7.app.AppCompatDelegate;
-import android.support.v7.widget.AppCompatImageView;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -22,6 +20,8 @@ import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.appcompat.widget.AppCompatImageView;
 import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.R;
 import com.apptentive.android.sdk.util.Util;
@@ -31,6 +31,9 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.apptentive.android.sdk.util.Util.guarded;
+import static com.apptentive.android.sdk.ApptentiveLogTag.UTIL;
+
 
 public class ImageGridViewAdapter extends BaseAdapter {
 
@@ -38,6 +41,7 @@ public class ImageGridViewAdapter extends BaseAdapter {
 	private static final int TYPE_IMAGE = 1;
 	public static final int GONE = 0x00000008;
 
+	private final String conversationToken;
 	private LayoutInflater inflater;
 	private boolean showCamera = true;
 	private boolean showImageIndicator = true;
@@ -57,7 +61,16 @@ public class ImageGridViewAdapter extends BaseAdapter {
 
 	private boolean bHasWritePermission;
 
-	public ImageGridViewAdapter(Context context, boolean showCamera) {
+	public ImageGridViewAdapter(Context context, String conversationToken, boolean showCamera) {
+		if (context == null) {
+			throw new IllegalArgumentException("Context is null");
+		}
+		if (conversationToken == null) {
+			throw new IllegalArgumentException("Conversation token is null");
+		}
+
+		this.conversationToken = conversationToken;
+
 		inflater = (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
 		this.showCamera = showCamera;
 		itemLayoutParams = new GridView.LayoutParams(GridView.LayoutParams.MATCH_PARENT, GridView.LayoutParams.MATCH_PARENT);
@@ -331,13 +344,13 @@ public class ImageGridViewAdapter extends BaseAdapter {
 						AppCompatDelegate.setCompatVectorFromResourcesEnabled(true);
 						// Add remove button overlay
 						indicator.setImageResource(defaultImageIndicator);
-						indicator.setOnClickListener(new View.OnClickListener() {
-							public void onClick(View v) {
-								if (localCallback != null) {
-									localCallback.onImageSelected(index);
-								}
-							}
-						});
+						indicator.setOnClickListener(guarded(new View.OnClickListener() {
+											public void onClick(View v) {
+												if (localCallback != null) {
+													localCallback.onImageSelected(index);
+												}
+											}
+										}));
 					}
 					mask.setVisibility(View.GONE);
 				}
@@ -400,7 +413,7 @@ public class ImageGridViewAdapter extends BaseAdapter {
 
 			if (itemWidth > 0) {
 				if (bLoadThumbnail) {
-					ApptentiveAttachmentLoader.getInstance().load(data.originalPath, data.localCachePath, pos, image, itemWidth, itemHeight, true,
+					ApptentiveAttachmentLoader.getInstance().load(conversationToken, data.originalPath, data.localCachePath, pos, image, itemWidth, itemHeight, true,
 							new ApptentiveAttachmentLoader.LoaderCallback() {
 								@Override
 								public void onLoaded(ImageView view, int i, Bitmap d) {
@@ -464,7 +477,7 @@ public class ImageGridViewAdapter extends BaseAdapter {
 								}
 							});
 				} else if (!TextUtils.isEmpty(data.originalPath) && downloadItems.contains(data.originalPath)) {
-					ApptentiveAttachmentLoader.getInstance().load(data.originalPath, data.localCachePath, index, image, 0, 0, false,
+					ApptentiveAttachmentLoader.getInstance().load(conversationToken, data.originalPath, data.localCachePath, index, image, 0, 0, false,
 							new ApptentiveAttachmentLoader.LoaderCallback() {
 								@Override
 								public void onLoaded(ImageView view, int pos, Bitmap d) {
@@ -473,7 +486,7 @@ public class ImageGridViewAdapter extends BaseAdapter {
 									}
 									image.setImageResource(R.drawable.apptentive_generic_file_thumbnail);
 									if (downloadItems.contains(data.originalPath)) {
-										ApptentiveLog.d("ApptentiveAttachmentLoader onLoaded callback");
+										ApptentiveLog.v(UTIL, "ApptentiveAttachmentLoader onLoaded callback");
 										downloadItems.remove(data.originalPath);
 										Util.openFileAttachment(view.getContext(), data.originalPath, data.localCachePath, data.mimeType);
 									}
@@ -507,13 +520,13 @@ public class ImageGridViewAdapter extends BaseAdapter {
 										} else if (progress >= 0) {
 											progressBarDownload.setVisibility(View.VISIBLE);
 											progressBarDownload.setProgress(progress);
-											ApptentiveLog.d("ApptentiveAttachmentLoader progress callback: " + progress);
+											ApptentiveLog.v(UTIL, "ApptentiveAttachmentLoader progress callback: " + progress);
 										}
 									}
 								}
 							});
 				} else {
-					ApptentiveAttachmentLoader.getInstance().load(null, null, index, image, 0, 0, false, new ApptentiveAttachmentLoader.LoaderCallback() {
+					ApptentiveAttachmentLoader.getInstance().load(conversationToken, null, null, index, image, 0, 0, false, new ApptentiveAttachmentLoader.LoaderCallback() {
 						@Override
 						public void onLoaded(ImageView view, int pos, Bitmap d) {
 							if (progressBarDownload != null) {

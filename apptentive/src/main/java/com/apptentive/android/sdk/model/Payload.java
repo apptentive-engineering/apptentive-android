@@ -6,6 +6,11 @@
 
 package com.apptentive.android.sdk.model;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import com.apptentive.android.sdk.Encryption;
+import com.apptentive.android.sdk.encryption.EncryptionKey;
 import com.apptentive.android.sdk.network.HttpRequestMethod;
 import com.apptentive.android.sdk.util.StringUtils;
 
@@ -17,24 +22,34 @@ public abstract class Payload {
 	private final PayloadType payloadType;
 
 	/**
-	 * If set, this payload should be encrypted in renderData().
+	 * Encryption key for encrypting payload.
 	 */
-	protected String encryptionKey;
+	private @NonNull Encryption encryption;
 
 	/**
 	 * The Conversation ID of the payload, if known at this time.
 	 */
-	protected String conversationId;
+	private String conversationId;
 
 	/**
 	 * Encrypted Payloads need to include the Conversation JWT inside them so that the server can
 	 * authenticate each payload after it is decrypted.
 	 */
-	protected String token;
+	private String token;
 
 	private String localConversationIdentifier;
 
 	private List<Object> attachments; // TODO: Figure out attachment handling
+
+	/**
+	 * <code>true</code> if payload belongs to an authenticated (logged-in) conversation
+	 */
+	private boolean authenticated;
+
+	/**
+	 * Session id which this payload belongs to
+	 */
+	private @Nullable String sessionId;
 
 	protected Payload(PayloadType type) {
 		if (type == null) {
@@ -49,7 +64,7 @@ public abstract class Payload {
 	/**
 	 * Binary data to be stored in database
 	 */
-	public abstract byte[] renderData() throws JSONException;
+	public abstract @NonNull byte[] renderData() throws Exception;
 
 	//region
 
@@ -78,12 +93,15 @@ public abstract class Payload {
 		return payloadType;
 	}
 
-	public void setEncryptionKey(String encryptionKey) {
-		this.encryptionKey = encryptionKey;
+	@NonNull Encryption getEncryption() {
+		return encryption;
 	}
 
-	public boolean hasEncryptionKey() {
-		return !StringUtils.isNullOrEmpty(encryptionKey);
+	public void setEncryption(@NonNull Encryption encryption) {
+		if (encryption == null) {
+			throw new IllegalArgumentException("Encryption is null");
+		}
+		this.encryption = encryption;
 	}
 
 	public String getConversationId() {
@@ -94,11 +112,11 @@ public abstract class Payload {
 		this.conversationId = conversationId;
 	}
 
-	public String getToken() {
+	public @Nullable String getConversationToken() {
 		return token;
 	}
 
-	public void setToken(String token) {
+	public void setToken(@Nullable String token) {
 		this.token = token;
 	}
 
@@ -120,6 +138,26 @@ public abstract class Payload {
 
 	public void setLocalConversationIdentifier(String localConversationIdentifier) {
 		this.localConversationIdentifier = localConversationIdentifier;
+	}
+
+	public boolean isAuthenticated() {
+		return authenticated;
+	}
+
+	public void setAuthenticated(boolean authenticated) {
+		this.authenticated = authenticated;
+	}
+
+	public void setSessionId(String sessionId) {
+		this.sessionId = sessionId;
+	}
+
+	public String getSessionId() {
+		return sessionId;
+	}
+
+	public boolean hasSessionId() {
+		return !StringUtils.isNullOrEmpty(sessionId);
 	}
 
 	//endregion

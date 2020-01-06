@@ -57,7 +57,7 @@ public class ConversationDataTest {
 			oos.writeObject(expected);
 
 			bais = new ByteArrayInputStream(baos.toByteArray());
-			ois = new ObjectInputStream(bais);
+			ois = new OverrideSerialVersionUIDObjectInputStream(bais);
 
 			ConversationData actual = (ConversationData) ois.readObject();
 			assertEquals(expected.getConversationId(), actual.getConversationId());
@@ -299,6 +299,14 @@ public class ConversationDataTest {
 
 		data.getEventData().storeInteractionForCurrentAppVersion(100D, 10, "1.0", "foo");
 		assertTrue(listenerFired);
+		listenerFired = false;
+
+		data.setMParticleId("1234567890");
+		assertTrue(listenerFired);
+		listenerFired = false;
+
+		data.setMParticleId("1234567890");
+		assertFalse(listenerFired);
 		listenerFired = false;
 	}
 

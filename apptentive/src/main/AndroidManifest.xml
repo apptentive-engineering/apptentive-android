@@ -11,13 +11,13 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <!-- Optional for Apptentive -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="18" />
 
     <application>
-        <provider android:name=".debug.AttachmentFileProvider"
-                  android:authorities="com.apptentive.android.sdk.debug.AttachmentFileProvider"
+        <provider android:name=".debug.ApptentiveAttachmentFileProvider"
+                  android:authorities="${applicationId}.ApptentiveAttachmentFileProvider"
                   android:enabled="true"
-                  android:exported="true"
+                  android:exported="false"
                   android:grantUriPermissions="true"/>
         <activity android:name="com.apptentive.android.sdk.ApptentiveViewActivity"
                   android:theme="@style/ApptentiveTheme.Base.Versioned"/>
@@ -25,5 +25,7 @@
                   android:enabled="true"
                   android:exported="false"/>
 
+        <receiver android:name=".module.engagement.notification.ApptentiveNotificationInteractionBroadcastReceiver"
+                  android:exported="false"/>
     </application>
 </manifest>

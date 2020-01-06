@@ -21,6 +21,8 @@
 
 package com.apptentive.android.sdk.util;
 
+import androidx.annotation.Nullable;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -33,7 +35,7 @@ public final class ObjectUtils {
 	 * Returns <code>null</code> if cast is impossible.
 	 */
 	@SuppressWarnings("unchecked")
-	public static <T> T as(Object object, Class<T> cls) {
+	public static @Nullable <T> T as(Object object, Class<T> cls) {
 		return cls.isInstance(object) ? (T) object : null;
 	}
 
@@ -50,7 +52,11 @@ public final class ObjectUtils {
 		return map;
 	}
 
-	public static boolean equal(Object expected, Object actual) {
+	public static boolean equal(@Nullable Object expected, @Nullable Object actual) {
 		return expected != null && actual != null && expected.equals(actual);
+	}
+
+	public static boolean isNullOrEmpty(byte[] array) {
+		return array == null || array.length == 0;
 	}
 }

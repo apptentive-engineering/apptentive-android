@@ -14,6 +14,9 @@ import org.json.JSONObject;
 
 import java.util.Map;
 
+import static com.apptentive.android.sdk.ApptentiveLogTag.MESSAGES;
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
+
 public abstract class ApptentiveMessage extends ConversationItem implements MessageCenterListItem {
 
 	public static final String KEY_ID = "id";
@@ -22,12 +25,12 @@ public abstract class ApptentiveMessage extends ConversationItem implements Mess
 	public static final String KEY_HIDDEN = "hidden";
 	/** inbound here means inbound to the server. When this is true, the message is outgoing */
 	public static final String KEY_INBOUND = "inbound";
-	public static final String KEY_CUSTOM_DATA = "custom_data";
+	@SensitiveDataKey public static final String KEY_CUSTOM_DATA = "custom_data";
 	public static final String KEY_AUTOMATED = "automated";
 	public static final String KEY_SENDER = "sender";
 	public static final String KEY_SENDER_ID = "id";
-	private static final String KEY_SENDER_NAME = "name";
-	private static final String KEY_SENDER_PROFILE_PHOTO = "profile_photo";
+	@SensitiveDataKey private static final String KEY_SENDER_NAME = "name";
+	@SensitiveDataKey private static final String KEY_SENDER_PROFILE_PHOTO = "profile_photo";
 
 	// State and Read are not stored in JSON, only in DB.
 	private State state = State.unknown;
@@ -36,7 +39,7 @@ public abstract class ApptentiveMessage extends ConversationItem implements Mess
 	// datestamp is only stored in memory, due to how we selectively apply date labeling in the view.
 	private String datestamp;
 
-
+	// this an abstract class so we don't need to register it's sensitive keys (subclasses will do)
 
 	protected ApptentiveMessage() {
 		super(PayloadType.message);
@@ -109,6 +112,7 @@ public abstract class ApptentiveMessage extends ConversationItem implements Mess
 			put(KEY_CUSTOM_DATA, customDataJson);
 		} catch (JSONException e) {
 			ApptentiveLog.e(e, "Exception setting ApptentiveMessage's %s field.", KEY_CUSTOM_DATA);
+			logException(e);
 		}
 	}
 
@@ -144,6 +148,7 @@ public abstract class ApptentiveMessage extends ConversationItem implements Mess
 			sender.put(KEY_SENDER_ID, senderId);
 		} catch (JSONException e) {
 			ApptentiveLog.e(e, "Exception setting ApptentiveMessage's %s field.", KEY_SENDER_ID);
+			logException(e);
 		}
 	}
 
@@ -156,7 +161,7 @@ public abstract class ApptentiveMessage extends ConversationItem implements Mess
 				}
 			}
 		} catch (JSONException e) {
-			// Ignore
+			logException(e);
 		}
 		return null;
 	}
@@ -170,7 +175,7 @@ public abstract class ApptentiveMessage extends ConversationItem implements Mess
 				}
 			}
 		} catch (JSONException e) {
-			// Should not happen.
+			logException(e);
 		}
 		return null;
 	}
@@ -232,7 +237,8 @@ public abstract class ApptentiveMessage extends ConversationItem implements Mess
 			try {
 				return Type.valueOf(rawType);
 			} catch (IllegalArgumentException e) {
-				ApptentiveLog.v("Error parsing unknown ApptentiveMessage.Type: " + rawType);
+				ApptentiveLog.v(MESSAGES, "Error parsing unknown ApptentiveMessage.Type: " + rawType);
+				logException(e);
 			}
 			return unknown;
 		}
@@ -248,7 +254,8 @@ public abstract class ApptentiveMessage extends ConversationItem implements Mess
 			try {
 				return State.valueOf(state);
 			} catch (IllegalArgumentException e) {
-				ApptentiveLog.v("Error parsing unknown ApptentiveMessage.State: " + state);
+				ApptentiveLog.v(MESSAGES, "Error parsing unknown ApptentiveMessage.State: " + state);
+				logException(e);
 			}
 			return unknown;
 		}

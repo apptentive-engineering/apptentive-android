@@ -9,8 +9,11 @@ package com.apptentive.android.sdk.storage;
 import android.content.Context;
 
 import com.apptentive.android.sdk.ApptentiveLog;
+import com.apptentive.android.sdk.Encryption;
 import com.apptentive.android.sdk.comm.ApptentiveHttpClient;
 import com.apptentive.android.sdk.conversation.Conversation;
+import com.apptentive.android.sdk.conversation.ConversationState;
+import com.apptentive.android.sdk.encryption.EncryptionKey;
 import com.apptentive.android.sdk.model.Payload;
 import com.apptentive.android.sdk.model.PayloadData;
 import com.apptentive.android.sdk.model.StoredFile;
@@ -18,7 +21,6 @@ import com.apptentive.android.sdk.network.HttpRequestRetryPolicyDefault;
 import com.apptentive.android.sdk.notifications.ApptentiveNotification;
 import com.apptentive.android.sdk.notifications.ApptentiveNotificationCenter;
 import com.apptentive.android.sdk.notifications.ApptentiveNotificationObserver;
-import com.apptentive.android.sdk.util.threading.DispatchQueue;
 import com.apptentive.android.sdk.util.threading.DispatchTask;
 
 import org.json.JSONObject;
@@ -30,6 +32,10 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import static com.apptentive.android.sdk.ApptentiveHelper.checkConversationQueue;
+import static com.apptentive.android.sdk.ApptentiveHelper.conversationQueue;
+import static com.apptentive.android.sdk.ApptentiveHelper.dispatchOnConversationQueue;
+import static com.apptentive.android.sdk.ApptentiveLogTag.CONVERSATION;
 import static com.apptentive.android.sdk.ApptentiveLogTag.PAYLOADS;
 import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_APP_ENTERED_BACKGROUND;
 import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_APP_ENTERED_FOREGROUND;
@@ -46,6 +52,7 @@ import static com.apptentive.android.sdk.conversation.ConversationState.UNDEFINE
 import static com.apptentive.android.sdk.debug.Assert.assertNotEquals;
 import static com.apptentive.android.sdk.debug.Assert.assertNotNull;
 import static com.apptentive.android.sdk.debug.Assert.notNull;
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
 import static java.lang.Boolean.FALSE;
 import static java.lang.Boolean.TRUE;
 
@@ -55,13 +62,13 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 	private final ThreadPoolExecutor singleThreadExecutor; // TODO: replace with a private concurrent dispatch queue
 
 	private final PayloadSender payloadSender;
-	private boolean appInBackground;
+	private boolean appInBackground = true;
 
 	/*
 	 * Creates an asynchronous task manager with one worker thread. This constructor must be invoked on the UI thread.
 	 */
-	public ApptentiveTaskManager(Context context, ApptentiveHttpClient apptentiveHttpClient) {
-		dbHelper = new ApptentiveDatabaseHelper(context);
+	public ApptentiveTaskManager(Context context, ApptentiveHttpClient apptentiveHttpClient, Encryption encryption) {
+		dbHelper = new ApptentiveDatabaseHelper(context, encryption);
 		/* When a new database task is submitted, the executor has the following behaviors:
 		 * 1. If the thread pool has no thread yet, it creates a single worker thread.
 		 * 2. If the single worker thread is running with tasks, it queues tasks.
@@ -75,7 +82,7 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 
 		// If no new task arrives in 30 seconds, the worker thread terminates; otherwise it will be reused
 		singleThreadExecutor.allowCoreThreadTimeOut(true);
-		
+
 		// Create payload sender object with a custom 'retry' policy
 		payloadSender = new PayloadSender(apptentiveHttpClient, new HttpRequestRetryPolicyDefault() {
 			@Override
@@ -105,7 +112,8 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 					dbHelper.addPayload(payload);
 					sendNextPayloadSync();
 				} catch (Exception e) {
-					ApptentiveLog.e(e, "Exception while adding a payload: %s", payload);
+					ApptentiveLog.e(PAYLOADS, e, "Exception while adding a payload: %s", payload);
+					logException(e);
 				}
 			}
 		});
@@ -120,7 +128,8 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 						dbHelper.deletePayload(payloadIdentifier);
 						sendNextPayloadSync();
 					} catch (Exception e) {
-						ApptentiveLog.e(e, "Exception while deleting a payload: %s", payloadIdentifier);
+						ApptentiveLog.e(PAYLOADS, e, "Exception while deleting a payload: %s", payloadIdentifier);
+						logException(e);
 					}
 				}
 			});
@@ -134,7 +143,8 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 				try {
 					dbHelper.deleteAllPayloads();
 				} catch (Exception e) {
-					ApptentiveLog.e(e, "Exception while deleting all payloads");
+					ApptentiveLog.e(PAYLOADS, e, "Exception while deleting all payloads");
+					logException(e);
 				}
 			}
 		});
@@ -151,7 +161,8 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 				try {
 					dbHelper.deleteAssociatedFiles(messageNonce);
 				} catch (Exception e) {
-					ApptentiveLog.e(e, "Exception while deleting associated file: %s", messageNonce);
+					ApptentiveLog.e(PAYLOADS, e, "Exception while deleting associated file: %s", messageNonce);
+					logException(e);
 				}
 			}
 		});
@@ -205,7 +216,7 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 				ApptentiveLog.v(PAYLOADS, "Payload failed to send due to a connection error.");
 				retrySending(5000);
 				return;
-			} else if (responseCode > 500) {
+			} else if (responseCode >= 500) {
 				ApptentiveLog.v(PAYLOADS, "Payload failed to send due to a server error.");
 				retrySending(5000);
 				return;
@@ -220,7 +231,7 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 
 	private void retrySending(long delayMillis) {
 		ApptentiveLog.d(PAYLOADS, "Retry sending payloads in %d ms", delayMillis);
-		DispatchQueue.backgroundQueue().dispatchAsync(new DispatchTask() {
+		conversationQueue().dispatchAsync(new DispatchTask() {
 			@Override
 			protected void execute() {
 				singleThreadExecutor.execute(new Runnable() {
@@ -230,7 +241,8 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 							ApptentiveLog.d(PAYLOADS, "Retrying sending payloads");
 							sendNextPayloadSync();
 						} catch (Exception e) {
-							ApptentiveLog.e(e, "Exception while trying to retry sending payloads");
+							ApptentiveLog.e(PAYLOADS, e, "Exception while trying to retry sending payloads");
+							logException(e);
 						}
 					}
 				});
@@ -242,10 +254,15 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 
 	//region Payload Sending
 	private void sendNextPayload() {
-		DispatchQueue.backgroundQueue().dispatchAsync(new DispatchTask() {
+		singleThreadExecutor.execute(new Runnable() {
 			@Override
-			protected void execute() {
-				sendNextPayloadSync();
+			public void run() {
+				try {
+					sendNextPayloadSync();
+				} catch (Exception e) {
+					ApptentiveLog.e(e, "Exception while trying to send next payload");
+					logException(e);
+				}
 			}
 		});
 	}
@@ -266,6 +283,7 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 			payload = getOldestUnsentPayloadSync();
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Exception while peeking the next payload for sending");
+			logException(e);
 			return;
 		}
 
@@ -277,8 +295,13 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 
 		// if payload sending was scheduled - notify the rest of the SDK
 		if (scheduled) {
-			ApptentiveNotificationCenter.defaultCenter()
-				.postNotification(NOTIFICATION_PAYLOAD_WILL_START_SEND, NOTIFICATION_KEY_PAYLOAD, payload);
+			dispatchOnConversationQueue(new DispatchTask() {
+				@Override
+				protected void execute() {
+					ApptentiveNotificationCenter.defaultCenter()
+							.postNotification(NOTIFICATION_PAYLOAD_WILL_START_SEND, NOTIFICATION_KEY_PAYLOAD, payload);
+				}
+			});
 		}
 	}
 
@@ -286,6 +309,8 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 
 	@Override
 	public void onReceiveNotification(ApptentiveNotification notification) {
+		checkConversationQueue();
+
 		if (notification.hasName(NOTIFICATION_CONVERSATION_STATE_DID_CHANGE)) {
 			final Conversation conversation = notification.getUserInfo(NOTIFICATION_KEY_CONVERSATION, Conversation.class);
 			assertNotNull(conversation); // sanity check
@@ -294,8 +319,9 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 				final String conversationId = notNull(conversation.getConversationId());
 				final String conversationToken = notNull(conversation.getConversationToken());
 				final String conversationLocalIdentifier = notNull(conversation.getLocalIdentifier());
+				final boolean legacyPayloads = ConversationState.LEGACY_PENDING.equals(conversation.getPrevState());
 
-				ApptentiveLog.d("Conversation %s state changed to %s.", conversationId, conversation.getState());
+				ApptentiveLog.d(CONVERSATION, "Conversation %s state changed %s -> %s.", conversationId, conversation.getPrevState(), conversation.getState());
 				// when the Conversation ID comes back from the server, we need to update
 				// the payloads that may have already been enqueued so
 				// that they each have the Conversation ID.
@@ -304,10 +330,11 @@ public class ApptentiveTaskManager implements PayloadStore, EventStore, Apptenti
 						@Override
 						public void run() {
 							try {
-								dbHelper.updateIncompletePayloads(conversationId, conversationToken, conversationLocalIdentifier);
+								dbHelper.updateIncompletePayloads(conversationId, conversationToken, conversationLocalIdentifier, legacyPayloads);
 								sendNextPayloadSync(); // after we've updated payloads - we need to send them
 							} catch (Exception e) {
-								ApptentiveLog.e(e, "Exception while trying to update incomplete payloads");
+								ApptentiveLog.e(CONVERSATION, e, "Exception while trying to update incomplete payloads");
+								logException(e);
 							}
 						}
 					});
