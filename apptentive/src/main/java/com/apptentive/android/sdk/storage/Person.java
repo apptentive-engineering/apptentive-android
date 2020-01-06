@@ -6,7 +6,9 @@
 
 package com.apptentive.android.sdk.storage;
 
-import android.text.TextUtils;
+import androidx.annotation.Nullable;
+
+import com.apptentive.android.sdk.util.StringUtils;
 
 public class Person implements Saveable, DataChangedListener {
 
@@ -22,6 +24,7 @@ public class Person implements Saveable, DataChangedListener {
 	private String zip;
 	private String country;
 	private String birthday;
+	private String mParticleId;
 	private CustomData customData;
 
 	public Person() {
@@ -30,6 +33,11 @@ public class Person implements Saveable, DataChangedListener {
 
 	//region Listeners
 	private transient DataChangedListener listener;
+	private transient PersonDataChangedListener personDataChangedListener;
+
+	public void setPersonDataChangedListener(PersonDataChangedListener personDataChangedListener) {
+		this.personDataChangedListener = personDataChangedListener;
+	}
 
 	@Override
 	public void setDataChangedListener(DataChangedListener listener) {
@@ -39,6 +47,9 @@ public class Person implements Saveable, DataChangedListener {
 
 	@Override
 	public void notifyDataChanged() {
+		if (personDataChangedListener != null) {
+			personDataChangedListener.onPersonDataChanged();
+		}
 		if (listener != null) {
 			listener.onDataChanged();
 		}
@@ -57,7 +68,7 @@ public class Person implements Saveable, DataChangedListener {
 	}
 
 	public void setId(String id) {
-		if (!TextUtils.equals(this.id, id)) {
+		if (!StringUtils.equal(this.id, id)) {
 			this.id = id;
 			notifyDataChanged();
 		}
@@ -68,7 +79,7 @@ public class Person implements Saveable, DataChangedListener {
 	}
 
 	public void setEmail(String email) {
-		if (!TextUtils.equals(this.email, email)) {
+		if (!StringUtils.equal(this.email, email)) {
 			this.email = email;
 			notifyDataChanged();
 		}
@@ -79,7 +90,7 @@ public class Person implements Saveable, DataChangedListener {
 	}
 
 	public void setName(String name) {
-		if (!TextUtils.equals(this.name, name)) {
+		if (!StringUtils.equal(this.name, name)) {
 			this.name = name;
 			notifyDataChanged();
 		}
@@ -90,7 +101,7 @@ public class Person implements Saveable, DataChangedListener {
 	}
 
 	public void setFacebookId(String facebookId) {
-		if (!TextUtils.equals(this.facebookId, facebookId)) {
+		if (!StringUtils.equal(this.facebookId, facebookId)) {
 			this.facebookId = facebookId;
 			notifyDataChanged();
 		}
@@ -101,7 +112,7 @@ public class Person implements Saveable, DataChangedListener {
 	}
 
 	public void setPhoneNumber(String phoneNumber) {
-		if (!TextUtils.equals(this.phoneNumber, phoneNumber)) {
+		if (!StringUtils.equal(this.phoneNumber, phoneNumber)) {
 			this.phoneNumber = phoneNumber;
 			notifyDataChanged();
 		}
@@ -112,7 +123,7 @@ public class Person implements Saveable, DataChangedListener {
 	}
 
 	public void setStreet(String street) {
-		if (!TextUtils.equals(this.street, street)) {
+		if (!StringUtils.equal(this.street, street)) {
 			this.street = street;
 			notifyDataChanged();
 		}
@@ -123,7 +134,7 @@ public class Person implements Saveable, DataChangedListener {
 	}
 
 	public void setCity(String city) {
-		if (!TextUtils.equals(this.city, city)) {
+		if (!StringUtils.equal(this.city, city)) {
 			this.city = city;
 			notifyDataChanged();
 		}
@@ -134,7 +145,7 @@ public class Person implements Saveable, DataChangedListener {
 	}
 
 	public void setZip(String zip) {
-		if (!TextUtils.equals(this.zip, zip)) {
+		if (!StringUtils.equal(this.zip, zip)) {
 			this.zip = zip;
 			notifyDataChanged();
 		}
@@ -145,7 +156,7 @@ public class Person implements Saveable, DataChangedListener {
 	}
 
 	public void setCountry(String country) {
-		if (!TextUtils.equals(this.country, country)) {
+		if (!StringUtils.equal(this.country, country)) {
 			this.country = country;
 			notifyDataChanged();
 		}
@@ -156,8 +167,19 @@ public class Person implements Saveable, DataChangedListener {
 	}
 
 	public void setBirthday(String birthday) {
-		if (!TextUtils.equals(this.birthday, birthday)) {
+		if (!StringUtils.equal(this.birthday, birthday)) {
 			this.birthday = birthday;
+			notifyDataChanged();
+		}
+	}
+
+	public @Nullable String getMParticleId() {
+		return mParticleId;
+	}
+
+	public void setMParticleId(String mParticleId) {
+		if (!StringUtils.equal(this.mParticleId, mParticleId)) {
+			this.mParticleId = mParticleId;
 			notifyDataChanged();
 		}
 	}

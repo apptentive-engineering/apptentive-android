@@ -13,10 +13,10 @@ import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Set;
 
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
+
 public class IntegrationConfigItem implements Serializable {
-
-	private static final long serialVersionUID = 1L;
-
+	private static final long serialVersionUID = 3509802144209212980L;
 	private static final String KEY_TOKEN = "token";
 
 	private HashMap<String, String> contents = new HashMap<>();
@@ -42,7 +42,7 @@ public class IntegrationConfigItem implements Serializable {
 			}
 			return ret;
 		} catch (JSONException e) {
-			// This can't happen.
+			logException(e);
 		}
 		return null;
 	}

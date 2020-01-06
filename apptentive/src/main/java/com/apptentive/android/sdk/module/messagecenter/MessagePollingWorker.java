@@ -7,29 +7,35 @@
 package com.apptentive.android.sdk.module.messagecenter;
 
 
+import androidx.annotation.NonNull;
+
 import com.apptentive.android.sdk.ApptentiveInternal;
 import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.conversation.Conversation;
+import com.apptentive.android.sdk.model.ApptentiveMessage;
 import com.apptentive.android.sdk.model.Configuration;
+import com.apptentive.android.sdk.notifications.ApptentiveNotificationCenter;
 import com.apptentive.android.sdk.util.Destroyable;
+import com.apptentive.android.sdk.util.threading.DispatchTask;
 
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.List;
 
-import static com.apptentive.android.sdk.ApptentiveLogTag.*;
+import static com.apptentive.android.sdk.ApptentiveHelper.dispatchOnConversationQueueOnce;
+import static com.apptentive.android.sdk.ApptentiveLogTag.MESSAGES;
+import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_KEY_INTERVAL;
+import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_MESSAGES_STOPPED_POLLING;
+import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_MESSAGES_STARTED_POLLING;
+import static com.apptentive.android.sdk.debug.Assert.assertTrue;
 
-class MessagePollingWorker implements Destroyable {
+class MessagePollingWorker implements Destroyable, MessageManager.MessageFetchListener {
 
 	private final MessageManager messageManager;
 	private final long backgroundPollingInterval;
 	private final long foregroundPollingInterval;
 	private final Configuration conf;
+	private boolean messageCenterInForeground;
 
-	/**
-	 * Worker thread for background message fetching
-	 */
-	private MessagePollingThread pollingThread;
-
-	final AtomicBoolean messageCenterInForeground = new AtomicBoolean(); // TODO: remove this flag
+	private DispatchTask messagePollingTask;
 
 	MessagePollingWorker(MessageManager messageManager) {
 		if (messageManager == null) {
@@ -41,6 +47,7 @@ class MessagePollingWorker implements Destroyable {
 		conf = Configuration.load();
 		backgroundPollingInterval = conf.getMessageCenterBgPoll() * 1000;
 		foregroundPollingInterval = conf.getMessageCenterFgPoll() * 1000;
+		ApptentiveLog.v(MESSAGES, "Message Polling Worker: bg=%d, fg=%d", backgroundPollingInterval, foregroundPollingInterval);
 	}
 
 	@Override
@@ -48,93 +55,19 @@ class MessagePollingWorker implements Destroyable {
 		stopPolling();
 	}
 
-	private class MessagePollingThread extends Thread {
-		/**
-		 * Flag indicating if message polling is active (message polling stops when this flag is set to
-		 * <code>false</code>
-		 */
-		private final AtomicBoolean isPolling = new AtomicBoolean(true);
+	//region MessageFetchListener
 
-		/**
-		 * Flag indicating if polling thread is busy with message fetching.
-		 */
-		private final AtomicBoolean isFetching = new AtomicBoolean(false);
-
-		MessagePollingThread() {
-			super("Message Polling Thread (" + getLocalConversationIdentifier() + ")");
-		}
-
-		@Override
-		public void run() {
-			try {
-				ApptentiveLog.v(MESSAGES, "%s started", getName());
-
-				while (isPolling.get()) {
-
-					// sync poll message and mark thread as 'fetching'
-					isFetching.set(true);
-					pollMessagesSync();
-					isFetching.set(false);
-
-					// if we're done polling - no need to sleep
-					if (!isPolling.get()) {
-						break;
-					}
-
-					// sleep until next iteration
-					long pollingInterval = messageCenterInForeground.get() ? foregroundPollingInterval : backgroundPollingInterval;
-					ApptentiveLog.v(MESSAGES, "Scheduled polling messages in %d sec", pollingInterval / 1000);
-					goToSleep(pollingInterval);
-				}
-			} catch (Exception e) {
-				ApptentiveLog.e(e, "Exception while polling messages");
-			} finally {
-				ApptentiveLog.v(MESSAGES, "%s stopped", getName());
-			}
-		}
-
-		private void pollMessagesSync() {
-			try {
-				if (ApptentiveInternal.getInstance().canShowMessageCenterInternal(getConversation())) {
-					ApptentiveLog.v(MESSAGES, "Checking server for new messages...");
-					messageManager.fetchAndStoreMessages(messageCenterInForeground.get(), conf.isMessageCenterNotificationPopupEnabled());
-				} else {
-					ApptentiveLog.w(MESSAGES, "Unable to fetch messages: message center can't be show at this time");
-				}
-			} catch (Exception e) {
-				ApptentiveLog.e(MESSAGES, e, "Exception while polling messages");
-			}
-		}
-
-		private void goToSleep(long millis) {
-			try {
-				Thread.sleep(millis);
-			} catch (InterruptedException e) {
-				ApptentiveLog.vv(MESSAGES, Thread.currentThread().getName() + " interrupted from sleep");
-			}
-		}
-
-		/**
-		 * Stops current polling
-		 */
-		void stopPolling() {
-			isPolling.set(false);
-			interrupt();
-		}
-
-		/**
-		 * Wake thread from a sleep
-		 */
-		void wakeUp() {
-			if (!isFetching.get()) {
-				interrupt();
-			} else {
-				ApptentiveLog.vv("Can't wake up polling thread while it's synchronously fetching new messages");
-			}
+	@Override
+	public void onFetchFinish(MessageManager manager, List<ApptentiveMessage> messages) {
+		if (isPolling()) {
+			long pollingInterval = getPollingInterval();
+			ApptentiveLog.v(MESSAGES, "Scheduled polling messages in %d sec", pollingInterval / 1000);
+			dispatchOnConversationQueueOnce(messagePollingTask, pollingInterval);
 		}
 	}
 
-	// Called from main UI thread to create a new worker thread
+	//endregion
+
 	void appWentToForeground() {
 		startPolling();
 	}
@@ -150,30 +83,56 @@ class MessagePollingWorker implements Destroyable {
 	 *
 	 * @param foreground true if the worker should be in foreground isPolling mode, else false.
 	 */
-	public void setMessageCenterInForeground(boolean foreground) {
-		messageCenterInForeground.set(foreground);
+	void setMessageCenterInForeground(boolean foreground) {
+		messageCenterInForeground = foreground;
 		if (foreground) {
-			startPolling();
+			startPolling(true);
 		}
 	}
 
-	synchronized void startPolling() {
-		ApptentiveLog.v(MESSAGES, "Start polling messages (%s)", getLocalConversationIdentifier());
-		if (pollingThread == null) {
-			pollingThread = new MessagePollingThread();
-			pollingThread.start();
-		} else {
-			pollingThread.wakeUp();
+	void startPolling() {
+		startPolling(false);
+	}
+
+	private void startPolling(boolean force) {
+		if (force) {
+			stopPolling();
+		}
+
+		if (!isPolling()) {
+			ApptentiveLog.v(MESSAGES, "Start polling messages (%s)", getLocalConversationIdentifier());
+			messagePollingTask = createPollingTask();
+			dispatchOnConversationQueueOnce(messagePollingTask, 0L);
+			notifyStartPolling(getPollingInterval());
 		}
 	}
 
-	synchronized void stopPolling() {
-		ApptentiveLog.v(MESSAGES, "Stop polling messages (%s)", getLocalConversationIdentifier());
-		if (pollingThread != null) {
-			pollingThread.stopPolling();
-			pollingThread = null;
+	void stopPolling() {
+		if (isPolling()) {
+			ApptentiveLog.v(MESSAGES, "Stop polling messages (%s)", getLocalConversationIdentifier());
+			messagePollingTask.cancel();
+			messagePollingTask = null;
+			notifyStopPolling();
 		}
 	}
+
+	private long getPollingInterval() {
+		return messageCenterInForeground ? foregroundPollingInterval : backgroundPollingInterval;
+	}
+
+	//region Notifications
+
+	private void notifyStartPolling(long interval) {
+		ApptentiveNotificationCenter.defaultCenter()
+			.postNotification(NOTIFICATION_MESSAGES_STARTED_POLLING,
+				NOTIFICATION_KEY_INTERVAL, interval);
+	}
+
+	private void notifyStopPolling() {
+		ApptentiveNotificationCenter.defaultCenter().postNotification(NOTIFICATION_MESSAGES_STOPPED_POLLING);
+	}
+
+	//endregion
 
 	private Conversation getConversation() {
 		return messageManager.getConversation();
@@ -181,5 +140,30 @@ class MessagePollingWorker implements Destroyable {
 
 	private String getLocalConversationIdentifier() {
 		return getConversation().getLocalIdentifier();
+	}
+
+	boolean isMessageCenterInForeground() {
+		return messageCenterInForeground;
+	}
+
+	private boolean isPolling() {
+		return messagePollingTask != null;
+	}
+
+	@NonNull
+	private DispatchTask createPollingTask() {
+		return new DispatchTask() { // TODO: convert to ConversationDispatchTask
+			@Override
+			protected void execute() {
+				assertTrue(isPolling(), "Not polling messages");
+
+				if (ApptentiveInternal.canShowMessageCenterInternal(getConversation())) {
+					ApptentiveLog.d(MESSAGES, "Checking server for new messages...");
+					messageManager.fetchAndStoreMessages(messageCenterInForeground, conf.isMessageCenterNotificationPopupEnabled(), MessagePollingWorker.this);
+				} else {
+					ApptentiveLog.w(MESSAGES, "Unable to fetch messages: message center can't be show at this time");
+				}
+			}
+		};
 	}
 }

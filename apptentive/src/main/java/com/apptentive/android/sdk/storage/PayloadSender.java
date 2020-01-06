@@ -15,10 +15,12 @@ import com.apptentive.android.sdk.util.StringUtils;
 
 import org.json.JSONObject;
 
+import static com.apptentive.android.sdk.ApptentiveHelper.conversationQueue;
 import static com.apptentive.android.sdk.ApptentiveLogTag.PAYLOADS;
 import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_AUTHENTICATION_FAILED;
 import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_KEY_AUTHENTICATION_FAILED_REASON;
 import static com.apptentive.android.sdk.ApptentiveNotifications.NOTIFICATION_KEY_CONVERSATION_ID;
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
 
 /**
  * Class responsible for a serial payload sending (one at a time)
@@ -79,6 +81,7 @@ class PayloadSender {
 			sendPayloadRequest(payload);
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Exception while sending payload: %s", payload);
+			logException(e);
 
 			// for NullPointerException, the message object would be null, we should handle it separately
 			// TODO: add a helper class for handling that
@@ -112,6 +115,8 @@ class PayloadSender {
 				} catch (Exception e) {
 					// TODO: Stop assuming the response is JSON. In fact, just send bytes back, and whatever part of the SDK needs it can try to convert it to the desired format.
 					ApptentiveLog.e(PAYLOADS, e, "Exception while handling payload send response");
+					logException(e);
+
 					handleFinishSendingPayload(payload, false, null, -1, null);
 				}
 			}
@@ -132,6 +137,7 @@ class PayloadSender {
 
 		// set 'retry' policy
 		payloadRequest.setRetryPolicy(requestRetryPolicy);
+		payloadRequest.setCallbackQueue(conversationQueue());
 		payloadRequest.start();
 	}
 
@@ -156,6 +162,7 @@ class PayloadSender {
 			}
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Exception while notifying payload listener");
+			logException(e);
 		}
 	}
 

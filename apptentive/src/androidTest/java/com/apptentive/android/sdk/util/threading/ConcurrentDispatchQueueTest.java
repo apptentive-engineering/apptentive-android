@@ -6,8 +6,7 @@
 
 package com.apptentive.android.sdk.util.threading;
 
-import android.support.test.runner.AndroidJUnit4;
-
+import androidx.test.runner.AndroidJUnit4;
 import com.apptentive.android.sdk.TestCaseBase;
 
 import org.junit.After;
@@ -20,7 +19,7 @@ public class ConcurrentDispatchQueueTest extends TestCaseBase {
 	private DispatchQueue dispatchQueue;
 
 	@Before
-	public void setUp() {
+	public void setUp() throws Exception {
 		super.setUp();
 		dispatchQueue = DispatchQueue.createBackgroundQueue("Test Queue", DispatchQueueType.Concurrent);
 	}

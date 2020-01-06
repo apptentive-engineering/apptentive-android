@@ -11,15 +11,13 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.os.Build;
-import android.support.test.InstrumentationRegistry;
-import android.test.RenamingDelegatingContext;
+import androidx.test.InstrumentationRegistry;
 
+import com.apptentive.android.sdk.ApptentiveInstance;
 import com.apptentive.android.sdk.ApptentiveInternal;
 import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.debug.Assert;
 import com.apptentive.android.sdk.debug.AssertImp;
-import com.apptentive.android.sdk.migration.v4_0_0.CodePointStore;
-import com.apptentive.android.sdk.migration.v4_0_0.VersionHistoryStore;
 import com.apptentive.android.sdk.module.engagement.interaction.InteractionManager;
 import com.apptentive.android.sdk.util.Util;
 
@@ -34,16 +32,16 @@ import java.io.InputStreamReader;
  */
 public abstract class ApptentiveTestCaseBase {
 	protected Context targetContext;
-	protected ApptentiveInternal apptentiveInternal;
+	protected ApptentiveInstance apptentiveInternal;
 	protected InteractionManager interactionManager;
 	protected int versionCode;
 	protected String versionName;
 
 	@Before
 	public void initializeApptentiveSdk() throws PackageManager.NameNotFoundException {
-		targetContext = new RenamingDelegatingContext(InstrumentationRegistry.getTargetContext(), "test_");
+		targetContext = InstrumentationRegistry.getTargetContext();
 		apptentiveInternal = ApptentiveInternal.getInstance();
-		ApptentiveLog.overrideLogLevel(ApptentiveLog.Level.VERY_VERBOSE);
+		ApptentiveLog.overrideLogLevel(ApptentiveLog.Level.VERBOSE);
 		PackageInfo packageInfo = targetContext.getPackageManager().getPackageInfo(targetContext.getPackageName(), 0);
 		versionCode = packageInfo.versionCode;
 		versionName = packageInfo.versionName;

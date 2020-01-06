@@ -1,3 +1,221 @@
+# 2020-01-06 - v5.5.1
+
+#### Changes
+
+* No changes
+
+# 2019-11-12 - v5.5.0
+
+#### Fixes
+
+* Added support for AndroidX.
+
+# 2019-10-24 - v5.4.7
+
+#### Fixes
+
+* Fixed crash while configuration changes.
+
+# 2019-09-02 - v5.4.6
+
+#### Fixes
+
+* Fixed Fragment crash while using `androidx.navigation:navigation-fragment-ktx` dependency.
+
+# 2019-08-15 - v5.4.5
+
+#### Fixes
+
+* Fixed Fragment crash while using `androidx.appcompat:appcompat:1.1.+` dependency.
+
+# 2019-07-26 - v5.4.4
+
+#### Fixes
+
+* Fixed R8 obfuscator crash.
+
+# 2019-06-17 - v5.4.3
+
+#### Improvements
+
+* Made Android ID collection optional on pre-Oreo targets.
+* Fixed "Who" card in the Message Center.
+
+# 2019-05-14 - v5.4.2
+
+#### Fixes
+
+* Fixed loading conversation data when the build if obfuscated with R8.
+
+# 2019-04-30 - v5.4.1
+
+#### Changes
+
+* Provided an API for custom device storage encryption/decryption.
+* Improved default encryption handling.
+
+# 2019-01-28 - v5.4.0
+
+#### Changes
+
+* Made encrypted storage configurable on the client.
+* Updated SDK dependencies to Android-P
+
+# 2018-12-05 - v5.3.3
+
+#### Fixes
+
+* Fixed rare Message Center crash due to concurrency issues.
+
+#### Changes
+
+* Improved encryption stability.
+* Allow users to make sequential `login` calls for the same user name.
+
+# 2018-08-30 - v5.3.2
+
+#### Fixes
+
+* Fixed encrypted message store for logged-in users.
+* Fixed the bug which prevented users from logging-in back after a logout.
+
+# 2018-08-30 - v5.3.1
+
+#### Fixes
+
+* Fixed SDK state restoration logic.
+* Fixed 422 http errors.
+* Fixed corrupted payloads if encryption key could not be resolved from the KeyStore.
+
+# 2018-08-30 - v5.3.0
+
+#### Improvements
+
+* Improved SDK security with encryption and KeyStore.
+
+# 2018-08-23 - v5.2.0
+
+#### Improvements
+
+* Added `OnPreInteractionListener` to intercept interactions flow.
+
+# 2018-07-19 - v5.1.5
+
+#### Improvements
+
+* Added support for Apptimize experiments.
+
+# 2018-07-05 - v5.1.4
+
+#### Fixes
+
+* Fixed implicit WRITE_EXTERNAL_STORAGE permission for Android O.
+* Fixed 'attr/textColorError' not found error for Android P.
+
+#### Improvements
+
+* Added support for mParticle user id.
+
+# 2018-05-22 - v5.1.3
+
+#### Improvements
+
+* Improved lifecycle management.
+
+# 2018-05-22 - v5.1.2
+
+#### Bugs Fixed
+
+* Properly handle different app support library versions.
+
+# 2018-05-09 - v5.1.1
+
+#### Bugs Fixed
+
+* Don't export ApptentiveAttachmentFileProvider.
+
+# 2018-05-01 - v5.1.0
+
+#### Major changes
+
+* Added support for notification-based interactions.
+
+#### Improvements
+
+* Better logging for interaction criteria evaluation.
+* Better troubleshooting support.
+
+# 2018-04-19 - v5.0.5
+
+#### Bugs Fixed
+
+* Fix message polling issue.
+* Fix UI-related crashes for logged-out conversation.
+* Fix sending device diffs.
+
+#### Improvements
+
+* Overall stability improvements.
+
+# 2018-02-08 - v5.0.4
+
+#### Bugs Fixed
+
+* Fix a rare NullPointerException that occurs when Apptentive SDK activities are started without proper SDK initialization.
+
+# 2018-01-30 - v5.0.3
+
+#### Improvements
+
+* Accessibility improvements for TalkBack.
+
+# 2018-01-11 - v5.0.2
+
+#### Bugs Fixed
+
+* Fix a NullPointerException that occurs when the Apptentive SDK is included in an Instant App, and the host app's Activity is not available when exiting the Apptentive UI.
+
+# 2017-12-19 - v5.0.1
+
+#### Bugs Fixed
+
+* Fixed callback passing [issue](https://github.com/apptentive/apptentive-android/issues/141).
+
+# 2017-12-16 - v5.0.0
+
+#### Major Changes
+
+* All long-running Apptentive API calls are now called asynchronously. See [Migrating to 5.0.0](docs/migrating_to_5.0.0.md) for migration instructions.
+
+#### Bugs Fixed
+
+* Fixed a bug where network operations might start when the app is started, but in the background.
+* Fixed an issue where the SDK might attempt to fetch messages when it shouldn't.
+
+# 2018-01-03 - v4.1.4
+
+#### Bugs Fixed
+
+* Fix a NullPointerException that occurs when the Apptentive SDK is included in an Instant App, and the host app's Activity is not available when exiting the Apptentive UI.
+
+# 2017-12-02 - v4.1.3
+
+#### Bugs Fixed
+
+* Fix a NullPointerException crash while announcing accessibility events.
+
+# 2017-11-09 - v4.1.2
+
+#### Bugs Fixed
+
+* Fix a crash that was caused by a method being removed in the Android Support Library.
+
+# 2017-11-08 - v4.1.1
+
+#### Bugs Fixed
+
+* Fix a bug where the SDK can't be installed in multiple apps due to a hard-coded Provider authority string.
+
 # 2017-11-06 - v4.1.0
 
 #### Improvements

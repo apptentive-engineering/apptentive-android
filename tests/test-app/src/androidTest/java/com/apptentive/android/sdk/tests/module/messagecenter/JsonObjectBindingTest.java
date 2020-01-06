@@ -6,15 +6,17 @@
 
 package com.apptentive.android.sdk.tests.module.messagecenter;
 
-import android.support.test.runner.AndroidJUnit4;
+import androidx.test.runner.AndroidJUnit4;
 
 import com.apptentive.android.sdk.ApptentiveInternal;
+import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.model.ApptentiveMessage;
 import com.apptentive.android.sdk.model.CompoundMessage;
 import com.apptentive.android.sdk.module.messagecenter.MessageManager;
 import com.apptentive.android.sdk.tests.ApptentiveTestCaseBase;
 
 import org.json.JSONException;
+import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -35,13 +37,14 @@ public class JsonObjectBindingTest extends ApptentiveTestCaseBase {
 	public void setUp() {
 		super.setUp();
 		ApptentiveInternal.setInstance(new ApptentiveInternal(targetContext));
+		ApptentiveLog.setShouldSanitizeLogMessages(false);
 	}
 
 	@Test
 	public void parsingTextMessageResponse() throws JSONException, IOException {
 		String exampleResponse = loadTextAssetAsString(TEST_DATA_DIR + "testParsingTextMessageResponse.json");
 		MessageManager mgr = new MockMessageManager();
-		List<ApptentiveMessage> apptentiveMessages = mgr.parseMessagesString(exampleResponse);
+		List<ApptentiveMessage> apptentiveMessages = mgr.parseMessages(new JSONObject(exampleResponse));
 		assertNotNull(apptentiveMessages);
 		assertEquals(5, apptentiveMessages.size());
 	}

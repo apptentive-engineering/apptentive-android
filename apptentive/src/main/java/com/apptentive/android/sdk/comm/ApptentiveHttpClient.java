@@ -16,7 +16,7 @@ import com.apptentive.android.sdk.network.RawHttpRequest;
 import com.apptentive.android.sdk.storage.AppRelease;
 import com.apptentive.android.sdk.storage.AppReleaseManager;
 import com.apptentive.android.sdk.storage.Device;
-import com.apptentive.android.sdk.storage.DeviceManager;
+import com.apptentive.android.sdk.storage.DevicePayloadDiff;
 import com.apptentive.android.sdk.storage.PayloadRequestSender;
 import com.apptentive.android.sdk.storage.Sdk;
 import com.apptentive.android.sdk.storage.SdkManager;
@@ -35,8 +35,8 @@ public class ApptentiveHttpClient implements PayloadRequestSender {
 
 	public static final String USER_AGENT_STRING = "Apptentive/%s (Android)"; // Format with SDK version string.
 
-	public static final int DEFAULT_HTTP_CONNECT_TIMEOUT = 45000;
-	public static final int DEFAULT_HTTP_SOCKET_TIMEOUT = 45000;
+	private static final int DEFAULT_HTTP_CONNECT_TIMEOUT = 45000;
+	private static final int DEFAULT_HTTP_SOCKET_TIMEOUT = 45000;
 
 	// Active API
 	private static final String ENDPOINT_CONVERSATION = "/conversation";
@@ -44,12 +44,13 @@ public class ApptentiveHttpClient implements PayloadRequestSender {
 	private static final String ENDPOINT_LEGACY_CONVERSATION = "/conversation/token";
 	private static final String ENDPOINT_LOG_IN_TO_EXISTING_CONVERSATION = "/conversations/%s/session";
 	private static final String ENDPOINT_LOG_IN_TO_NEW_CONVERSATION = "/conversations";
+	private static final String ENDPOINT_INTERACTIONS = "/conversations/%s/interactions";
+	private static final String ENDPOINT_MESSAGES = "/conversations/%s/messages?count=%s&starts_after=%s&before_id=%s";
 
 	private final String apptentiveKey;
 	private final String apptentiveSignature;
 	private final String serverURL;
 	private final String userAgentString;
-	private final HttpRequestManager httpRequestManager;
 
 	public ApptentiveHttpClient(String apptentiveKey, String apptentiveSignature, String serverURL) {
 		if (StringUtils.isNullOrEmpty(apptentiveKey)) {
@@ -64,11 +65,10 @@ public class ApptentiveHttpClient implements PayloadRequestSender {
 			throw new IllegalArgumentException("Illegal server URL: '" + serverURL + "'");
 		}
 
-		this.httpRequestManager = new HttpRequestManager();
 		this.apptentiveKey = apptentiveKey;
 		this.apptentiveSignature = apptentiveSignature;
 		this.serverURL = serverURL;
-		this.userAgentString = String.format(USER_AGENT_STRING, Constants.APPTENTIVE_SDK_VERSION);
+		this.userAgentString = String.format(USER_AGENT_STRING, Constants.getApptentiveSdkVersion());
 	}
 
 	//region API Requests
@@ -90,6 +90,38 @@ public class ApptentiveHttpClient implements PayloadRequestSender {
 		return request;
 	}
 
+	public HttpJsonRequest createFetchInteractionsRequest(String conversationToken, String conversationId, HttpRequest.Listener<HttpJsonRequest> listener) {
+		if (StringUtils.isNullOrEmpty(conversationToken)) {
+			throw new IllegalArgumentException("Conversation token is null or empty");
+		}
+
+		if (StringUtils.isNullOrEmpty(conversationId)) {
+			throw new IllegalArgumentException("Conversation id is null or empty");
+		}
+
+		final String endPoint = StringUtils.format(ENDPOINT_INTERACTIONS, conversationId);
+		HttpJsonRequest request = createJsonRequest(endPoint, new JSONObject(), HttpRequestMethod.GET);
+		request.setRequestProperty("Authorization", "Bearer " + conversationToken);
+		request.addListener(listener);
+		return request;
+	}
+
+	public HttpJsonRequest createFetchMessagesRequest(String conversationToken, String conversationId, String afterId, String beforeId, Integer count, HttpRequest.Listener<HttpJsonRequest> listener) {
+		if (StringUtils.isNullOrEmpty(conversationToken)) {
+			throw new IllegalArgumentException("Conversation token is null or empty");
+		}
+
+		if (StringUtils.isNullOrEmpty(conversationId)) {
+			throw new IllegalArgumentException("Conversation id is null or empty");
+		}
+
+		final String endPoint = String.format(ENDPOINT_MESSAGES, conversationId, count == null ? "" : count.toString(), afterId == null ? "" : afterId, beforeId == null ? "" : beforeId);
+		HttpJsonRequest request = createJsonRequest(endPoint, new JSONObject(), HttpRequestMethod.GET);
+		request.setRequestProperty("Authorization", "Bearer " + conversationToken);
+		request.addListener(listener);
+		return request;
+	}
+
 	public HttpJsonRequest createLoginRequest(String conversationId, String token, HttpRequest.Listener<HttpJsonRequest> listener) {
 		if (token == null) {
 			throw new IllegalArgumentException("Token is null");
@@ -105,7 +137,7 @@ public class ApptentiveHttpClient implements PayloadRequestSender {
 		if (conversationId == null) {
 			endPoint = ENDPOINT_LOG_IN_TO_NEW_CONVERSATION;
 
-		}else {
+		} else {
 			endPoint = StringUtils.format(ENDPOINT_LOG_IN_TO_EXISTING_CONVERSATION, conversationId);
 		}
 		HttpJsonRequest request = createJsonRequest(endPoint, json, HttpRequestMethod.POST);
@@ -136,7 +168,7 @@ public class ApptentiveHttpClient implements PayloadRequestSender {
 
 		ConversationTokenRequest conversationTokenRequest = new ConversationTokenRequest();
 		conversationTokenRequest.setSdkAndAppRelease(SdkManager.getPayload(sdk), AppReleaseManager.getPayload(appRelease));
-		conversationTokenRequest.setDevice(DeviceManager.getDiffPayload(null, device));
+		conversationTokenRequest.setDevice(DevicePayloadDiff.getDiffPayload(null, device));
 
 		try {
 			conversationTokenRequest.put("token", token);
@@ -153,7 +185,7 @@ public class ApptentiveHttpClient implements PayloadRequestSender {
 	 * Returns the first request with a given tag or <code>null</code> is not found
 	 */
 	public HttpRequest findRequest(String tag) {
-		return httpRequestManager.findRequest(tag);
+		return HttpRequestManager.sharedManager().findRequest(tag);
 	}
 
 	//endregion
@@ -184,7 +216,7 @@ public class ApptentiveHttpClient implements PayloadRequestSender {
 			request.setRequestProperty("Authorization", "Bearer " + authToken);
 		}
 
-		if (payload.isEncrypted()) {
+		if (payload.isAuthenticated()) {
 			request.setRequestProperty("APPTENTIVE-ENCRYPTED", Boolean.TRUE);
 		}
 
@@ -237,7 +269,7 @@ public class ApptentiveHttpClient implements PayloadRequestSender {
 	}
 
 	private void setupRequestDefaults(HttpRequest request) {
-		request.setRequestManager(httpRequestManager);
+		request.setRequestManager(HttpRequestManager.sharedManager());
 		request.setRequestProperty("User-Agent", userAgentString);
 		request.setRequestProperty("Connection", "Keep-Alive");
 		request.setRequestProperty("Accept-Encoding", "gzip");

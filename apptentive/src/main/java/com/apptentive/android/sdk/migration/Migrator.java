@@ -11,7 +11,9 @@ import android.content.SharedPreferences;
 
 import com.apptentive.android.sdk.Apptentive;
 import com.apptentive.android.sdk.ApptentiveLog;
+import com.apptentive.android.sdk.ApptentiveLogTag;
 import com.apptentive.android.sdk.conversation.Conversation;
+import com.apptentive.android.sdk.debug.ErrorMetrics;
 import com.apptentive.android.sdk.migration.v4_0_0.CodePointStore;
 import com.apptentive.android.sdk.migration.v4_0_0.VersionHistoryEntry;
 import com.apptentive.android.sdk.migration.v4_0_0.VersionHistoryStore;
@@ -35,6 +37,8 @@ import org.json.JSONObject;
 import java.io.Serializable;
 import java.util.Iterator;
 import java.util.Map;
+
+import static com.apptentive.android.sdk.ApptentiveLogTag.CONVERSATION;
 
 public class Migrator {
 
@@ -145,7 +149,8 @@ public class Migrator {
 				conversation.setDevice(device);
 			}
 		} catch (Exception e) {
-			ApptentiveLog.e(e, "Error migrating Device.");
+			ApptentiveLog.e(CONVERSATION, e, "Error migrating Device.");
+			logException(e);
 		}
 	}
 
@@ -164,7 +169,8 @@ public class Migrator {
 				sdk.setAuthorEmail(sdkOld.getAuthorEmail());
 				conversation.setSdk(sdk);
 			} catch (Exception e) {
-				ApptentiveLog.e(e, "Error migrating Sdk.");
+				ApptentiveLog.e(CONVERSATION, e, "Error migrating Sdk.");
+				logException(e);
 			}
 		}
 	}
@@ -186,7 +192,8 @@ public class Migrator {
 				appRelease.setVersionName(appReleaseOld.getVersionName());
 				conversation.setAppRelease(appRelease);
 			} catch (Exception e) {
-				ApptentiveLog.e(e, "Error migrating AppRelease.");
+				ApptentiveLog.e(CONVERSATION, e, "Error migrating AppRelease.");
+				logException(e);
 			}
 		}
 	}
@@ -226,7 +233,8 @@ public class Migrator {
 				}
 				conversation.setPerson(person);
 			} catch (Exception e) {
-				ApptentiveLog.e(e, "Error migrating Person.");
+				ApptentiveLog.e(CONVERSATION, e, "Error migrating Person.");
+				logException(e);
 			}
 		}
 	}
@@ -250,7 +258,8 @@ public class Migrator {
 				}
 			}
 		} catch (Exception e) {
-			ApptentiveLog.w(e, "Error migrating VersionHistory entries V2 to V3.");
+			ApptentiveLog.w(CONVERSATION, e, "Error migrating VersionHistory entries V2 to V3.");
+			logException(e);
 		}
 	}
 
@@ -268,7 +277,8 @@ public class Migrator {
 				eventData.setInteractions(migratedInteractions);
 			}
 		} catch (Exception e) {
-			ApptentiveLog.w(e, "Error migrating Event Data.");
+			ApptentiveLog.w(CONVERSATION, e, "Error migrating Event Data.");
+			logException(e);
 		}
 	}
 
@@ -286,8 +296,13 @@ public class Migrator {
 				}
 			}
 		} catch (JSONException e) {
-			ApptentiveLog.e(e, "Error migrating JSONObject.");
+			ApptentiveLog.e(CONVERSATION, e, "Error migrating JSONObject.");
+			logException(e);
 		}
 		return null;
+	}
+
+	private static void logException(Exception e) {
+		ErrorMetrics.logException(e); // TODO: add more context
 	}
 }

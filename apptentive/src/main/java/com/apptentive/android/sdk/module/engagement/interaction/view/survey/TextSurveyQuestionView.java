@@ -6,8 +6,8 @@
 
 package com.apptentive.android.sdk.module.engagement.interaction.view.survey;
 
+import android.os.Build;
 import android.os.Bundle;
-import android.support.design.widget.TextInputLayout;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
@@ -18,12 +18,16 @@ import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 
+import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.R;
 import com.apptentive.android.sdk.module.engagement.interaction.model.survey.SinglelineQuestion;
 
+import com.google.android.material.textfield.TextInputLayout;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
 
 
 public class TextSurveyQuestionView extends BaseSurveyQuestionView<SinglelineQuestion> implements TextWatcher {
@@ -54,7 +58,7 @@ public class TextSurveyQuestionView extends BaseSurveyQuestionView<SinglelineQue
 			try {
 				question = new SinglelineQuestion(bundle.getString("question"));
 			} catch (JSONException e) {
-
+				logException(e);
 			}
 		}
 	}
@@ -62,7 +66,12 @@ public class TextSurveyQuestionView extends BaseSurveyQuestionView<SinglelineQue
 	@Override
 	public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
 		View v = super.onCreateView(inflater, container, savedInstanceState);
-		inflater.inflate(R.layout.apptentive_survey_question_singleline, getAnswerContainer(v));
+		try {
+			inflater.inflate(R.layout.apptentive_survey_question_singleline, getAnswerContainer(v));
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onCreateView", TextSurveyQuestionView.class.getSimpleName());
+			logException(e);
+		}
 
 		return v;
 	}
@@ -106,13 +115,16 @@ public class TextSurveyQuestionView extends BaseSurveyQuestionView<SinglelineQue
 		}
 
 		if (isFocused) {
-			answer.post(new Runnable() {
+			answer.post(new Runnable() { // TODO: replace with DispatchQueue
 				public void run() {
 					answer.requestFocus();
 				}
 			});
 		}
 
+		if (Build.VERSION.SDK_INT > Build.VERSION_CODES.JELLY_BEAN_MR1) {
+			answerTextInputLayout.setLabelFor(R.id.answer_text);
+		}
 	}
 
 	@Override
@@ -151,7 +163,7 @@ public class TextSurveyQuestionView extends BaseSurveyQuestionView<SinglelineQue
 				return jsonArray;
 			}
 		} catch (JSONException e) {
-			// Return null;
+			logException(e);
 		}
 		return null;
 	}

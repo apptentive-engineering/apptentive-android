@@ -14,6 +14,9 @@ import org.json.JSONException;
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.apptentive.android.sdk.ApptentiveLogTag.INTERACTIONS;
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
+
 /**
  * @author Sky Kelsey
  */
@@ -32,7 +35,8 @@ public class Actions extends JSONArray {
 				}
 			}
 		} catch (JSONException e) {
-			ApptentiveLog.w(e, "Exception parsing interactions array.");
+			ApptentiveLog.w(INTERACTIONS, e, "Exception parsing interactions array.");
+			logException(e);
 		}
 		return ret;
 	}

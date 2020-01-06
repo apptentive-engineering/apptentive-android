@@ -6,8 +6,15 @@
 
 package com.apptentive.android.sdk.conversation;
 
+import androidx.annotation.NonNull;
+
 import com.apptentive.android.sdk.ApptentiveLog;
+import com.apptentive.android.sdk.Encryption;
 import com.apptentive.android.sdk.debug.Assert;
+import com.apptentive.android.sdk.encryption.EncryptionException;
+import com.apptentive.android.sdk.debug.ErrorMetrics;
+
+import com.apptentive.android.sdk.encryption.EncryptionHelper;
 import com.apptentive.android.sdk.model.ApptentiveMessage;
 import com.apptentive.android.sdk.module.messagecenter.model.MessageFactory;
 import com.apptentive.android.sdk.serialization.SerializableObject;
@@ -15,17 +22,27 @@ import com.apptentive.android.sdk.storage.MessageStore;
 import com.apptentive.android.sdk.util.StringUtils;
 import com.apptentive.android.sdk.util.Util;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
 import java.io.DataInputStream;
 import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.crypto.BadPaddingException;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+
+import static com.apptentive.android.sdk.ApptentiveLogTag.CONVERSATION;
+import static com.apptentive.android.sdk.ApptentiveLogTag.MESSAGES;
 import static com.apptentive.android.sdk.util.Util.readNullableBoolean;
 import static com.apptentive.android.sdk.util.Util.readNullableDouble;
 import static com.apptentive.android.sdk.util.Util.readNullableUTF;
@@ -41,10 +58,20 @@ class FileMessageStore implements MessageStore {
 
 	private final File file;
 	private final List<MessageEntry> messageEntries;
+	private Encryption encryption;
 	private boolean shouldFetchFromFile;
 
-	FileMessageStore(File file) {
+	FileMessageStore(File file, Encryption encryption) {
+		if (file == null) {
+			throw new IllegalArgumentException("File is null");
+		}
+
+		if (encryption == null) {
+			throw new IllegalArgumentException("Encryption key is null");
+		}
+
 		this.file = file;
+		this.encryption = encryption;
 		this.messageEntries = new ArrayList<>(); // we need a random access
 		this.shouldFetchFromFile = true; // we would lazily read it from a file later
 	}
@@ -61,7 +88,7 @@ class FileMessageStore implements MessageStore {
 				// Update
 				existing.id = apptentiveMessage.getId();
 				existing.state = apptentiveMessage.getState().name();
-				if (apptentiveMessage.isRead()) { // A apptentiveMessage can't be unread after being read.
+				if (apptentiveMessage.isRead()) { // A message can't be unread after being read.
 					existing.isRead = true;
 				}
 				existing.json = apptentiveMessage.getJsonObject().toString();
@@ -107,7 +134,7 @@ class FileMessageStore implements MessageStore {
 		for (MessageEntry entry : messageEntries) {
 			ApptentiveMessage apptentiveMessage = MessageFactory.fromJson(entry.json);
 			if (apptentiveMessage == null) {
-				ApptentiveLog.e("Error parsing Record json from database: %s", entry.json);
+				ApptentiveLog.e(MESSAGES, "Error parsing Record json from database: %s", entry.json);
 				continue;
 			}
 			apptentiveMessage.setState(ApptentiveMessage.State.parse(entry.state));
@@ -132,7 +159,7 @@ class FileMessageStore implements MessageStore {
 	}
 
 	@Override
-	public synchronized int getUnreadMessageCount() throws Exception {
+	public synchronized int getUnreadMessageCount() {
 		fetchEntries();
 
 		int count = 0;
@@ -196,50 +223,49 @@ class FileMessageStore implements MessageStore {
 				messageEntries.addAll(entries);
 			}
 		} catch (Exception e) {
-			ApptentiveLog.e(e, "Exception while reading entries");
+			ApptentiveLog.e(MESSAGES, e, "Exception while reading entries");
+			logException(e);
 		}
 	}
 
-	private List<MessageEntry> readFromFileGuarded() throws IOException {
-		DataInputStream dis = null;
-		try {
-			dis = new DataInputStream(new FileInputStream(file));
-			byte version = dis.readByte();
-			if (version != VERSION) {
-				throw new IOException("Unsupported binary version: " + version);
-			}
-			int entryCount = dis.readInt();
-			List<MessageEntry> entries = new ArrayList<>();
-			for (int i = 0; i < entryCount; ++i) {
-				entries.add(new MessageEntry(dis));
-			}
-			return entries;
-		} finally {
-			Util.ensureClosed(dis);
+	private List<MessageEntry> readFromFileGuarded() throws IOException, EncryptionException {
+		byte[] bytes = EncryptionHelper.readFromEncryptedFile(encryption, file);
+		ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
+
+		DataInputStream dis = new DataInputStream(bis);
+		byte version = dis.readByte();
+		if (version != VERSION) {
+			throw new IOException("Unsupported binary version: " + version);
 		}
+		int entryCount = dis.readInt();
+		List<MessageEntry> entries = new ArrayList<>();
+		for (int i = 0; i < entryCount; ++i) {
+			entries.add(new MessageEntry(dis));
+		}
+		return entries;
 	}
 
 	private synchronized void writeToFile() {
 		try {
 			writeToFileGuarded();
 		} catch (Exception e) {
-			ApptentiveLog.e(e, "Exception while saving messages");
+			ApptentiveLog.e(MESSAGES, e, "Exception while saving messages");
+			logException(e);
 		}
 		shouldFetchFromFile = false; // mark it as not shouldFetchFromFile to keep a memory version
 	}
 
-	private void writeToFileGuarded() throws IOException {
-		DataOutputStream dos = null;
-		try {
-			dos = new DataOutputStream(new FileOutputStream(file));
-			dos.writeByte(VERSION);
-			dos.writeInt(messageEntries.size());
-			for (MessageEntry entry : messageEntries) {
-				entry.writeExternal(dos);
-			}
-		} finally {
-			Util.ensureClosed(dos);
+	private void writeToFileGuarded() throws IOException, EncryptionException {
+		ByteArrayOutputStream bos = new ByteArrayOutputStream();
+		DataOutputStream dos = new DataOutputStream(bos);
+		dos.writeByte(VERSION);
+		dos.writeInt(messageEntries.size());
+		for (MessageEntry entry : messageEntries) {
+			entry.writeExternal(dos);
 		}
+		long start = System.currentTimeMillis();
+		EncryptionHelper.writeToEncryptedFile(encryption, file, bos.toByteArray());
+		ApptentiveLog.v(MESSAGES, "Messages saved. Took %d ms", System.currentTimeMillis() - start);
 	}
 
 	//endregion
@@ -258,6 +284,16 @@ class FileMessageStore implements MessageStore {
 			}
 		}
 		return null;
+	}
+
+	void updateEncryption(@NonNull Encryption encryption) {
+		if (encryption == null) {
+			throw new IllegalArgumentException("Encryption is null");
+		}
+		this.encryption = encryption;
+
+		// update storage
+		writeToFile();
 	}
 
 	//endregion
@@ -305,6 +341,56 @@ class FileMessageStore implements MessageStore {
 				       ", json='" + json + '\'' +
 				       '}';
 		}
+	}
+
+	//endregion
+
+	//region Migration
+
+	public void migrateLegacyStorage() {
+		try {
+			File unencryptedFile = Util.getUnencryptedFilename(file);
+			if (unencryptedFile.exists()) {
+				try {
+					List<MessageEntry> entries = readFromLegacyFile(unencryptedFile);
+					messageEntries.addAll(entries);
+					writeToFile();
+				} finally {
+					boolean deleted = unencryptedFile.delete();
+					ApptentiveLog.d(CONVERSATION, "Deleted legacy message storage: %b", deleted);
+				}
+			}
+		} catch (Exception e) {
+			ApptentiveLog.e(CONVERSATION, e, "Exception while migrating messages");
+			logException(e);
+		}
+	}
+
+	private static List<MessageEntry> readFromLegacyFile(File file) throws IOException {
+		DataInputStream dis = null;
+		try {
+			dis = new DataInputStream(new FileInputStream(file));
+			byte version = dis.readByte();
+			if (version != VERSION) {
+				throw new IOException("Unsupported binary version: " + version);
+			}
+			int entryCount = dis.readInt();
+			List<MessageEntry> entries = new ArrayList<>();
+			for (int i = 0; i < entryCount; ++i) {
+				entries.add(new MessageEntry(dis));
+			}
+			return entries;
+		} finally {
+			Util.ensureClosed(dis);
+		}
+	}
+
+	//endregion
+
+	//region Error Reporting
+
+	private void logException(Exception e) {
+		ErrorMetrics.logException(e);
 	}
 
 	//endregion

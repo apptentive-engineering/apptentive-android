@@ -6,19 +6,31 @@
 
 package com.apptentive.android.sdk.model;
 
+import androidx.annotation.NonNull;
+
 import com.apptentive.android.sdk.ApptentiveLog;
-import com.apptentive.android.sdk.encryption.Encryptor;
 import com.apptentive.android.sdk.network.HttpRequestMethod;
+import com.apptentive.android.sdk.util.RuntimeUtils;
 import com.apptentive.android.sdk.util.StringUtils;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static com.apptentive.android.sdk.ApptentiveLogTag.PAYLOADS;
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
 
 public abstract class JsonPayload extends Payload {
+
+	private static final Map<Class<? extends JsonPayload>, List<String>> SENSITIVE_KEYS_LOOKUP = new HashMap<>();
 
 	private static final String KEY_NONCE = "nonce";
 
@@ -38,22 +50,17 @@ public abstract class JsonPayload extends Payload {
 	//region Data
 
 	@Override
-	public byte[] renderData() throws JSONException {
+	public @NonNull byte[] renderData() throws Exception {
 		String jsonString = marshallForSending().toString();
-		ApptentiveLog.vv(PAYLOADS, jsonString);
+		ApptentiveLog.v(PAYLOADS, jsonString);
 
-		if (encryptionKey != null) {
+		// authenticated payloads get encrypted before sending
+		if (isAuthenticated()) {
 			byte[] bytes = jsonString.getBytes();
-			Encryptor encryptor = new Encryptor(encryptionKey);
-			try {
-				return encryptor.encrypt(bytes);
-			} catch (Exception e) {
-				ApptentiveLog.e(PAYLOADS, "Error encrypting payload data", e);
-			}
-			return null;
-		} else {
-			return jsonString.getBytes();
+			return getEncryption().encrypt(bytes);
 		}
+
+		return jsonString.getBytes();
 	}
 
 	//endregion
@@ -62,9 +69,10 @@ public abstract class JsonPayload extends Payload {
 
 	protected void put(String key, String value) {
 		try {
-			jsonObject.put(key, value);
+			jsonObject.put(key, toNullableValue(value));
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Exception while putting json pair '%s'='%s'", key, value);
+			logException(e);
 		}
 	}
 
@@ -73,6 +81,7 @@ public abstract class JsonPayload extends Payload {
 			jsonObject.put(key, value);
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Exception while putting json pair '%s'='%s'", key, value);
+			logException(e);
 		}
 	}
 
@@ -81,6 +90,7 @@ public abstract class JsonPayload extends Payload {
 			jsonObject.put(key, value);
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Exception while putting json pair '%s'='%s'", key, value);
+			logException(e);
 		}
 	}
 
@@ -89,14 +99,16 @@ public abstract class JsonPayload extends Payload {
 			jsonObject.put(key, value);
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Exception while putting json pair '%s'='%s'", key, value);
+			logException(e);
 		}
 	}
 
 	protected void put(String key, JSONObject object) {
 		try {
-			jsonObject.put(key, object);
+			jsonObject.put(key, toNullableValue(object));
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Exception while putting json pair '%s'='%s'", key, object);
+			logException(e);
 		}
 	}
 
@@ -127,7 +139,7 @@ public abstract class JsonPayload extends Payload {
 		try {
 			return jsonObject.getDouble(key);
 		} catch (Exception e) {
-			// Ignore.
+			logException(e);
 		}
 		return null;
 	}
@@ -144,13 +156,42 @@ public abstract class JsonPayload extends Payload {
 		return jsonObject.isNull(key);
 	}
 
+	private Object toNullableValue(Object value) {
+		return value != null ? value : JSONObject.NULL;
+	}
+
 	//endregion
 
 	//region String Representation
 
 	@Override
 	public String toString() {
+		if (ApptentiveLog.shouldSanitizeLogMessages()) {
+			JSONObject safeJsonObject = createSafeJsonObject(jsonObject);
+			return StringUtils.format("%s %s", getClass().getSimpleName(), safeJsonObject);
+		}
 		return StringUtils.format("%s %s", getClass().getSimpleName(), jsonObject);
+	}
+
+	private JSONObject createSafeJsonObject(JSONObject jsonObject) {
+		try {
+			List<String> sensitiveKeys = SENSITIVE_KEYS_LOOKUP.get(getClass());
+			if (sensitiveKeys != null && sensitiveKeys.size() > 0) {
+				JSONObject safeObject = new JSONObject();
+				Iterator<String> iterator = jsonObject.keys();
+				while (iterator.hasNext()) {
+					String key = iterator.next();
+					Object value = sensitiveKeys.contains(key) ? "<HIDDEN>" : jsonObject.get(key);
+					safeObject.put(key, value);
+				}
+				return safeObject;
+			}
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception while creating safe json object");
+			logException(e);
+		}
+
+		return null;
 	}
 
 	//endregion
@@ -168,7 +209,7 @@ public abstract class JsonPayload extends Payload {
 
 	@Override
 	public String getHttpRequestContentType() {
-		if (encryptionKey != null) {
+		if (isAuthenticated()) {
 			return "application/octet-stream";
 		} else {
 			return "application/json";
@@ -187,7 +228,7 @@ public abstract class JsonPayload extends Payload {
 
 	//endregion
 
-	protected final JSONObject marshallForSending() throws JSONException {
+	final JSONObject marshallForSending() throws JSONException {
 		JSONObject result;
 		String container = getJsonContainer();
 		if (container != null) {
@@ -197,8 +238,12 @@ public abstract class JsonPayload extends Payload {
 			result = jsonObject;
 		}
 
-		if (encryptionKey != null) {
-			result.put("token", token);
+		if (isAuthenticated()) {
+			result.put("token", getConversationToken());
+		}
+
+		if (hasSessionId()) {
+			result.put("session_id", getSessionId());
 		}
 
 		return result;
@@ -207,4 +252,34 @@ public abstract class JsonPayload extends Payload {
 	protected String getJsonContainer() {
 		return null;
 	}
+
+	//region Sensitive Keys
+
+	protected static void registerSensitiveKeys(Class<? extends JsonPayload> cls) {
+		List<Field> fields = RuntimeUtils.listFields(cls, new RuntimeUtils.FieldFilter() {
+			@Override
+			public boolean accept(Field field) {
+				return Modifier.isStatic(field.getModifiers()) && // static fields
+						field.getAnnotation(SensitiveDataKey.class) != null &&  // marked as 'sensitive'
+						field.getType().equals(String.class); // with type of String
+			}
+		});
+
+		if (fields.size() > 0) {
+			List<String> keys = new ArrayList<>(fields.size());
+			try {
+				for (Field field : fields) {
+					field.setAccessible(true);
+					String value = (String) field.get(null);
+					keys.add(value);
+				}
+				SENSITIVE_KEYS_LOOKUP.put(cls, keys);
+			} catch (Exception e) {
+				ApptentiveLog.e(e, "Exception while registering sensitive keys");
+				logException(e);
+			}
+		}
+	}
+
+	//endregion
 }

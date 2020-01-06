@@ -7,9 +7,7 @@
 package com.apptentive.android.sdk.module.messagecenter.view.holder;
 
 import android.os.Build;
-import android.support.annotation.RequiresApi;
-import android.support.design.widget.TextInputLayout;
-import android.support.v7.widget.RecyclerView;
+import androidx.recyclerview.widget.RecyclerView;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
@@ -24,9 +22,13 @@ import com.apptentive.android.sdk.R;
 import com.apptentive.android.sdk.module.messagecenter.model.WhoCard;
 import com.apptentive.android.sdk.module.messagecenter.view.MessageCenterRecyclerViewAdapter;
 import com.apptentive.android.sdk.util.Util;
+import com.apptentive.android.sdk.util.threading.DispatchQueue;
+import com.apptentive.android.sdk.util.threading.DispatchTask;
+import com.google.android.material.textfield.TextInputLayout;
 
 import static android.view.View.GONE;
 import static android.view.View.VISIBLE;
+import static com.apptentive.android.sdk.util.Util.guarded;
 
 public class WhoCardHolder extends RecyclerView.ViewHolder {
 
@@ -130,13 +132,13 @@ public class WhoCardHolder extends RecyclerView.ViewHolder {
 		} else {
 			skipButton.setVisibility(VISIBLE);
 			skipButton.setText(whoCard.getSkipButton());
-			skipButton.setOnClickListener(new View.OnClickListener() {
-				public void onClick(View view) {
-					if (adapter.getListener() != null) {
-						adapter.getListener().onCloseWhoCard(skipButton.getText().toString());
+			skipButton.setOnClickListener(guarded(new View.OnClickListener() {
+					public void onClick(View view) {
+						if (adapter.getListener() != null) {
+							adapter.getListener().onCloseWhoCard(skipButton.getText().toString());
+						}
 					}
-				}
-			});
+				}));
 		}
 
 		if (TextUtils.isEmpty(whoCard.getSaveButton())) {
@@ -146,7 +148,7 @@ public class WhoCardHolder extends RecyclerView.ViewHolder {
 			saveButton.setText(whoCard.getSaveButton());
 		}
 
-		saveButton.setOnClickListener(new View.OnClickListener() {
+		saveButton.setOnClickListener(guarded(new View.OnClickListener() {
 			public void onClick(View view) {
 				if (isWhoCardContentValid(whoCard.isRequire())) {
 					Apptentive.setPersonEmail(emailEditText.getText().toString().trim());
@@ -156,20 +158,20 @@ public class WhoCardHolder extends RecyclerView.ViewHolder {
 					}
 				}
 			}
-		});
+		}));
 		if (adapter.getListener() != null) {
 			adapter.getListener().onWhoCardViewCreated(nameEditText, emailEditText, null);
 		}
 
 		// we need to properly announce the profile card: sending an implicit accessibility event
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-			itemView.postDelayed(new Runnable() {
-				@Override
-				public void run() {
-						itemView.sendAccessibilityEvent(AccessibilityEvent.TYPE_ANNOUNCEMENT);
+		DispatchQueue.mainQueue().dispatchAsync(new DispatchTask() {
+			@Override
+			protected void execute() {
+				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+					itemView.sendAccessibilityEvent(AccessibilityEvent.TYPE_ANNOUNCEMENT);
 				}
-			}, 500);
-		}
+			}
+		}, 500);
 	}
 
 	private boolean isWhoCardContentValid(boolean required) {

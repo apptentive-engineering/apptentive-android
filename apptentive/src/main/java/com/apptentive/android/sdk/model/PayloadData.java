@@ -9,6 +9,8 @@ package com.apptentive.android.sdk.model;
 import com.apptentive.android.sdk.network.HttpRequestMethod;
 import com.apptentive.android.sdk.util.StringUtils;
 
+import static com.apptentive.android.sdk.ApptentiveLog.hideIfSanitized;
+
 public class PayloadData {
 	private final PayloadType type;
 	private final String nonce;
@@ -18,10 +20,10 @@ public class PayloadData {
 	private final String contentType;
 	private final String httpRequestPath;
 	private final HttpRequestMethod httpRequestMethod;
-	private final boolean encrypted;
+	private final boolean authenticated;
 
 
-	public PayloadData(PayloadType type, String nonce, String conversationId, byte[] data, String authToken, String contentType, String httpRequestPath, HttpRequestMethod httpRequestMethod, boolean encrypted) {
+	public PayloadData(PayloadType type, String nonce, String conversationId, byte[] data, String authToken, String contentType, String httpRequestPath, HttpRequestMethod httpRequestMethod, boolean authenticated) {
 		if (type == null) {
 			throw new IllegalArgumentException("Payload type is null");
 		}
@@ -58,14 +60,14 @@ public class PayloadData {
 		this.contentType = contentType;
 		this.httpRequestPath = httpRequestPath;
 		this.httpRequestMethod = httpRequestMethod;
-		this.encrypted = encrypted;
+		this.authenticated = authenticated;
 	}
 
 	//region String representation
 
 	@Override
 	public String toString() {
-		return StringUtils.format("type=%s nonce=%s conversationId=%s authToken=%s httpRequestPath=%s", type, nonce, conversationId, authToken, httpRequestPath);
+		return StringUtils.format("type=%s nonce=%s conversationId=%s authToken=%s httpRequestPath=%s", type, nonce, conversationId, hideIfSanitized(authToken), httpRequestPath);
 	}
 
 	//endregion
@@ -104,8 +106,8 @@ public class PayloadData {
 		return httpRequestMethod;
 	}
 
-	public boolean isEncrypted() {
-		return encrypted;
+	public boolean isAuthenticated() {
+		return authenticated;
 	}
 
 	//endregion

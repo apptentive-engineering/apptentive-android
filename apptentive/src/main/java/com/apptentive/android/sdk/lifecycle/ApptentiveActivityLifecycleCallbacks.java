@@ -8,14 +8,19 @@ package com.apptentive.android.sdk.lifecycle;
 
 import android.app.Activity;
 import android.app.Application;
-import android.content.Context;
 import android.os.Bundle;
 import android.os.Handler;
-
-import com.apptentive.android.sdk.ApptentiveInternal;
+import androidx.annotation.Nullable;
 import com.apptentive.android.sdk.ApptentiveLog;
+import com.apptentive.android.sdk.debug.ErrorMetrics;
+import com.apptentive.android.sdk.notifications.ApptentiveNotificationCenter;
+import com.apptentive.android.sdk.util.threading.DispatchTask;
 
+import java.lang.ref.WeakReference;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static com.apptentive.android.sdk.ApptentiveHelper.dispatchOnConversationQueue;
+import static com.apptentive.android.sdk.ApptentiveNotifications.*;
 
 /**
  * 1. Keeps track of whether the app is in the foreground. It does this by counting the number of active Activities.
@@ -23,6 +28,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 3. Tells the SDK when an Activity starts or resumes, so the SDK can hold a weak reference to the top Activity.
  */
 public class ApptentiveActivityLifecycleCallbacks implements Application.ActivityLifecycleCallbacks {
+
+	// Holds reference to the current foreground activity of the host app
+	private WeakReference<Activity> currentTaskStackTopActivity;
 
 	private AtomicInteger foregroundActivities = new AtomicInteger(0);
 
@@ -34,15 +42,50 @@ public class ApptentiveActivityLifecycleCallbacks implements Application.Activit
 	 * Set to false when the app goes to the background.
 	 */
 	private boolean isAppForeground;
+
+	private boolean callbacksRegistered;
+
 	private Handler delayedChecker = new Handler();
 
 	private static final long CHECK_DELAY_SHORT = 1000;
 
-	public ApptentiveActivityLifecycleCallbacks() {
+	private ApptentiveActivityLifecycleCallbacks() {
+	}
+
+	public static synchronized void register(Application application) {
+		if (application == null) {
+			throw new IllegalArgumentException("Application is null");
+		}
+
+		Holder.INSTANCE.registerCallbacks(application);
+	}
+
+	public static @Nullable Activity getCurrentTopActivity() {
+		WeakReference<Activity> reference = Holder.INSTANCE.currentTaskStackTopActivity;
+		return reference != null ? reference.get() : null;
+	}
+
+	private void registerCallbacks(Application application) {
+		if (!callbacksRegistered) {
+			application.registerActivityLifecycleCallbacks(this);
+			callbacksRegistered = true;
+		} else {
+			ApptentiveLog.w("Apptentive Activity callbacks already registered.");
+			if (isAppForeground) {
+				dispatchOnConversationQueue(new DispatchTask() {
+                    @Override
+                    protected void execute() {
+                        ApptentiveLog.d("Sending missing foreground notification.");
+                        ApptentiveNotificationCenter.defaultCenter()
+                                .postNotification(NOTIFICATION_APP_ENTERED_FOREGROUND);
+                    }
+                });
+			}
+		}
 	}
 
 	@Override
-	public void onActivityStarted(Activity activity) {
+	public void onActivityStarted(final Activity activity) {
 		boolean wasAppBackground = !isAppForeground;
 		isAppForeground = true;
 
@@ -55,12 +98,30 @@ public class ApptentiveActivityLifecycleCallbacks implements Application.Activit
 			appEnteredForeground();
 		}
 
-		ApptentiveInternal.getInstance().onActivityStarted(activity); // TODO: post a notification here
+		dispatchOnConversationQueue(new DispatchTask() {
+			@Override
+			protected void execute() {
+				// Set current foreground activity reference whenever a new activity is started
+				currentTaskStackTopActivity = new WeakReference<>(activity);
+
+				ApptentiveNotificationCenter.defaultCenter()
+						.postNotification(NOTIFICATION_ACTIVITY_STARTED, NOTIFICATION_KEY_ACTIVITY, activity);
+			}
+		});
 	}
 
 	@Override
-	public void onActivityResumed(Activity activity) {
-		ApptentiveInternal.getInstance().onActivityResumed(activity);  // TODO: post a notification here
+	public void onActivityResumed(final Activity activity) {
+		dispatchOnConversationQueue(new DispatchTask() {
+			@Override
+			protected void execute() {
+				// Set current foreground activity reference whenever a new activity is started
+				currentTaskStackTopActivity = new WeakReference<>(activity);
+
+				ApptentiveNotificationCenter.defaultCenter()
+						.postNotification(NOTIFICATION_ACTIVITY_RESUMED, NOTIFICATION_KEY_ACTIVITY, activity);
+			}
+		});
 	}
 
 	@Override
@@ -83,7 +144,7 @@ public class ApptentiveActivityLifecycleCallbacks implements Application.Activit
 	 * @param activity
 	 */
 	@Override
-	public void onActivityStopped(Activity activity) {
+	public void onActivityStopped(final Activity activity) {
 		if (foregroundActivities.decrementAndGet() < 0) {
 			ApptentiveLog.e("Incorrect number of foreground Activities encountered. Resetting to 0.");
 			foregroundActivities.set(0);
@@ -94,9 +155,9 @@ public class ApptentiveActivityLifecycleCallbacks implements Application.Activit
 		}
 
 		/* When one activity transits to another one, there is a brief period during which the former
-			* is paused but the latter has not yet resumed. To prevent false negative, check routine is
-      * delayed
-      */
+		 * is paused but the latter has not yet resumed. To prevent false negative, check routine is
+		 * delayed
+		 */
 		delayedChecker.postDelayed(checkFgBgRoutine = new Runnable() {
 			@Override
 			public void run() {
@@ -107,10 +168,18 @@ public class ApptentiveActivityLifecycleCallbacks implements Application.Activit
 					}
 				} catch (Exception e) {
 					ApptentiveLog.e(e, "Exception in delayed checking");
+					ErrorMetrics.logException(e);
 				}
 			}
 		}, CHECK_DELAY_SHORT);
 
+		dispatchOnConversationQueue(new DispatchTask() {
+			@Override
+			protected void execute() {
+				ApptentiveNotificationCenter.defaultCenter()
+						.postNotification(NOTIFICATION_ACTIVITY_STOPPED, NOTIFICATION_KEY_ACTIVITY, activity);
+			}
+		});
 	}
 
 	@Override
@@ -119,24 +188,34 @@ public class ApptentiveActivityLifecycleCallbacks implements Application.Activit
 	}
 
 	private void appEnteredForeground() {
-		ApptentiveLog.d("App went to foreground.");
-		ApptentiveInternal.getInstance().onAppEnterForeground();
-		// Mark entering foreground as app launch
-		appLaunched(ApptentiveInternal.getInstance().getApplicationContext());
+		dispatchOnConversationQueue(new DispatchTask() {
+			@Override
+			protected void execute() {
+				ApptentiveLog.d("App went to foreground.");
+				ApptentiveNotificationCenter.defaultCenter()
+						.postNotification(NOTIFICATION_APP_ENTERED_FOREGROUND);
+			}
+		});
 	}
 
 	private void appEnteredBackground() {
-		ApptentiveLog.d("App went to background.");
-		ApptentiveInternal.getInstance().onAppEnterBackground();  // TODO: post a notification here
-		// Mark entering background as app exit
-		appExited(ApptentiveInternal.getInstance().getApplicationContext());
+		dispatchOnConversationQueue(new DispatchTask() {
+			@Override
+			protected void execute() {
+				ApptentiveLog.d("App went to background.");
+				currentTaskStackTopActivity = null;
+
+				ApptentiveNotificationCenter.defaultCenter()
+						.postNotification(NOTIFICATION_APP_ENTERED_BACKGROUND);
+			}
+		});
 	}
 
-	private void appLaunched(Context appContext) {
-		ApptentiveInternal.getInstance().onAppLaunch(appContext);  // TODO: post a notification here
+	public static ApptentiveActivityLifecycleCallbacks getInstance() {
+		return Holder.INSTANCE;
 	}
 
-	private void appExited(Context appContext) {
-		ApptentiveInternal.getInstance().onAppExit(appContext);  // TODO: post a notification here
+	private static class Holder {
+		private static final ApptentiveActivityLifecycleCallbacks INSTANCE = new ApptentiveActivityLifecycleCallbacks();
 	}
 }

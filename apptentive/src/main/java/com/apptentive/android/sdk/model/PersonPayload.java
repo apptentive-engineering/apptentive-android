@@ -6,12 +6,11 @@
 
 package com.apptentive.android.sdk.model;
 
-import com.apptentive.android.sdk.ApptentiveLog;
-import com.apptentive.android.sdk.network.HttpRequestMethod;
 import com.apptentive.android.sdk.util.StringUtils;
 
 import org.json.JSONException;
-import org.json.JSONObject;
+
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
 
 public class PersonPayload extends JsonPayload {
 
@@ -27,7 +26,14 @@ public class PersonPayload extends JsonPayload {
 	private static final String KEY_ZIP = "zip";
 	private static final String KEY_COUNTRY = "country";
 	private static final String KEY_BIRTHDAY = "birthday";
-	public static final String KEY_CUSTOM_DATA = "custom_data";
+	@SensitiveDataKey
+	private static final String KEY_M_PARTICLE_ID = "mparticle_id";
+	@SensitiveDataKey
+	private static final String KEY_CUSTOM_DATA = "custom_data";
+
+	static {
+		registerSensitiveKeys(PersonPayload.class);
+	}
 
 	public PersonPayload() {
 		super(PayloadType.person);
@@ -110,7 +116,7 @@ public class PersonPayload extends JsonPayload {
 			try {
 				return new CustomData(getJSONObject(KEY_CUSTOM_DATA));
 			} catch (JSONException e) {
-				// Ignore
+				logException(e);
 			}
 		}
 		return null;
@@ -118,5 +124,9 @@ public class PersonPayload extends JsonPayload {
 
 	public void setCustomData(CustomData customData) {
 		put(KEY_CUSTOM_DATA, customData);
+	}
+
+	public void setMParticleId(String mParticleId) {
+		put(KEY_M_PARTICLE_ID, mParticleId);
 	}
 }

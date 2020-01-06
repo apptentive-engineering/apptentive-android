@@ -25,6 +25,8 @@ import org.json.JSONObject;
 
 import java.util.*;
 
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
+
 
 public class MultichoiceSurveyQuestionView extends BaseSurveyQuestionView<MultichoiceQuestion> implements SurveyQuestionChoice.OnCheckedChangeListener, SurveyQuestionChoice.OnOtherTextChangedListener {
 
@@ -54,7 +56,7 @@ public class MultichoiceSurveyQuestionView extends BaseSurveyQuestionView<Multic
 			try {
 				question = new MultichoiceQuestion(bundle.getString("question"));
 			} catch (JSONException e) {
-				//
+				logException(e);
 			}
 		}
 	}
@@ -63,29 +65,34 @@ public class MultichoiceSurveyQuestionView extends BaseSurveyQuestionView<Multic
 	public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
 		View v = super.onCreateView(inflater, container, savedInstanceState);
 
-		List<AnswerDefinition> answerDefinitions = question.getAnswerChoices();
+		try {
+			List<AnswerDefinition> answerDefinitions = question.getAnswerChoices();
 
-		View questionView = inflater.inflate(R.layout.apptentive_survey_question_multichoice, getAnswerContainer(v));
+			View questionView = inflater.inflate(R.layout.apptentive_survey_question_multichoice, getAnswerContainer(v));
 
-		choiceContainer = (LinearLayout) questionView.findViewById(R.id.choice_container);
+			choiceContainer = (LinearLayout) questionView.findViewById(R.id.choice_container);
 
-		if (savedInstanceState != null) {
-			selectedChoices = (HashSet<Integer>) savedInstanceState.getSerializable(SELECTED_CHOICES);
-			otherState = (HashMap<Integer, String>) savedInstanceState.getSerializable(OTHER_STATE);
-		}
-
-		for (int i = 0; i < answerDefinitions.size(); i++) {
-			AnswerDefinition answerDefinition = answerDefinitions.get(i);
-			SurveyQuestionChoice choice = new SurveyQuestionChoice(getContext(), inflater, answerDefinition, question.getType(), i);
-			if (selectedChoices.contains(i)) {
-				choice.setChecked(true);
+			if (savedInstanceState != null) {
+				selectedChoices = (HashSet<Integer>) savedInstanceState.getSerializable(SELECTED_CHOICES);
+				otherState = (HashMap<Integer, String>) savedInstanceState.getSerializable(OTHER_STATE);
 			}
-			if (answerDefinition.getType().equals(AnswerDefinition.TYPE_OTHER)) {
-				choice.setOtherText(otherState.get(i));
+
+			for (int i = 0; i < answerDefinitions.size(); i++) {
+				AnswerDefinition answerDefinition = answerDefinitions.get(i);
+				SurveyQuestionChoice choice = new SurveyQuestionChoice(getContext(), inflater, answerDefinition, question.getType(), i);
+				if (selectedChoices.contains(i)) {
+					choice.setChecked(true);
+				}
+				if (answerDefinition.getType().equals(AnswerDefinition.TYPE_OTHER)) {
+					choice.setOtherText(otherState.get(i));
+				}
+				choice.setOnCheckChangedListener(this);
+				choice.setOnOtherTextChangedListener(this);
+				choiceContainer.addView(choice);
 			}
-			choice.setOnCheckChangedListener(this);
-			choice.setOnOtherTextChangedListener(this);
-			choiceContainer.addView(choice);
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onCreateView()", MultichoiceSurveyQuestionView.class);
+			logException(e);
 		}
 		return v;
 	}
@@ -154,6 +161,7 @@ public class MultichoiceSurveyQuestionView extends BaseSurveyQuestionView<Multic
 			}
 		} catch (Exception e) {
 			ApptentiveLog.e(e, "Error getting survey answer.");
+			logException(e);
 		}
 		return null;
 	}

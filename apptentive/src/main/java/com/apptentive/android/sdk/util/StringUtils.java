@@ -25,14 +25,23 @@ import com.apptentive.android.sdk.ApptentiveLog;
 
 import org.json.JSONObject;
 
-import java.net.URLEncoder;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.io.Writer;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
+import java.util.UUID;
 
 /**
  * A collection of useful string-related functions
  */
 public final class StringUtils {
+	private static final DateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-dd-MM HH:mm:ss:SSS", Locale.US);
 
 	/**
 	 * Safe <code>String.format</code>
@@ -47,6 +56,12 @@ public final class StringUtils {
 		}
 
 		return format;
+	}
+
+	public static String getStackTrace(Throwable t) {
+		Writer writer = new StringWriter();
+		t.printStackTrace(new PrintWriter(writer));
+		return writer.toString();
 	}
 
 	/**
@@ -73,6 +88,11 @@ public final class StringUtils {
 		}
 
 		return result.toString();
+	}
+
+	public static String toPrettyDate(double timeInSeconds) {
+		long timeInMillis = (long) (1000L * timeInSeconds);
+		return DATE_FORMAT.format(new Date(timeInMillis));
 	}
 
 	/**
@@ -115,47 +135,17 @@ public final class StringUtils {
 	}
 
 	/**
-	 * Create URL encoded params string from the map of key-value pairs
-	 *
-	 * @throws IllegalArgumentException if map, any key or value appears to be null
-	 */
-	public static String createQueryString(Map<String, Object> params) {
-		if (params == null) {
-			throw new IllegalArgumentException("Params are null");
-		}
-
-		StringBuilder result = new StringBuilder();
-		for (Map.Entry<String, Object> e : params.entrySet()) {
-			String key = e.getKey();
-			if (key == null) {
-				throw new IllegalArgumentException("key is null");
-			}
-
-			Object valueObj = e.getValue();
-			if (valueObj == null) {
-				throw new IllegalArgumentException("value is null for key '" + key + "'");
-			}
-
-			String value = valueObj.toString();
-
-			@SuppressWarnings("deprecation")
-			String encodedKey = URLEncoder.encode(key);
-			@SuppressWarnings("deprecation")
-			String encodedValue = URLEncoder.encode(value);
-
-			result.append(result.length() == 0 ? "?" : "&");
-			result.append(encodedKey);
-			result.append("=");
-			result.append(encodedValue);
-		}
-		return result.toString();
-	}
-
-	/**
 	 * Checks is string is null or empty
 	 */
 	public static boolean isNullOrEmpty(String str) {
 		return str == null || str.length() == 0;
+	}
+
+	/**
+	 * Safely trims input string
+	 */
+	public static String trim(String str) {
+		return str != null && str.length() > 0 ? str.trim() : str;
 	}
 
 	/**
@@ -190,6 +180,8 @@ public final class StringUtils {
 		}
 		return ret;
 	}
+
+	//region Pretty print
 
 	public static String table(Object[][] rows) {
 		return table(rows, null);
@@ -230,4 +222,30 @@ public final class StringUtils {
 		result.append("\n").append(line);
 		return result.toString();
 	}
+
+	//endregion
+
+	//region Parsing
+
+	public static int parseInt(String value, int defaultValue) {
+		try {
+			return Integer.parseInt(value);
+		} catch (Exception e) {
+			return defaultValue;
+		}
+	}
+
+	//endregion
+
+	//region Device identifiers
+
+	public static String randomAndroidID() {
+		Random random = new Random();
+		long lo = ((long) random.nextInt()) & 0xffffffffL;
+		long hi = ((long) random.nextInt()) << 32L;
+		long number = hi | lo;
+		return Long.toHexString(number);
+	}
+
+	//endregion
 }

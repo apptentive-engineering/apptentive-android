@@ -7,7 +7,6 @@
 package com.apptentive.android.sdk.module.engagement.interaction.view.survey;
 
 import android.os.Bundle;
-import android.support.v4.app.Fragment;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -16,9 +15,13 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import androidx.fragment.app.Fragment;
+import com.apptentive.android.sdk.ApptentiveLog;
 import com.apptentive.android.sdk.R;
 import com.apptentive.android.sdk.module.survey.OnSurveyQuestionAnsweredListener;
 import com.apptentive.android.sdk.module.engagement.interaction.model.survey.Question;
+
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
 
 
 abstract public class BaseSurveyQuestionView<Q extends Question> extends Fragment implements SurveyQuestionView {
@@ -43,22 +46,30 @@ abstract public class BaseSurveyQuestionView<Q extends Question> extends Fragmen
 
 	public void onViewCreated(View view, Bundle savedInstanceState) {
 		super.onViewCreated(view, savedInstanceState);
-		root = (FrameLayout) view.findViewById(R.id.question_base);
-		requiredView = (TextView) view.findViewById(R.id.question_required);
-		dashView = view.findViewById(R.id.dash_view);
-		instructionsView = (TextView) view.findViewById(R.id.question_instructions);
+		try {
+			root = (FrameLayout) view.findViewById(R.id.question_base);
+			requiredView = (TextView) view.findViewById(R.id.question_required);
+			dashView = view.findViewById(R.id.dash_view);
+			instructionsView = (TextView) view.findViewById(R.id.question_instructions);
 
-		// Makes UI tests easier. We can potentially obviate this if surveys used a RecyclerView.
-		root.setTag(Integer.parseInt(getTag()));
+			// Makes UI tests easier. We can potentially obviate this if surveys used a RecyclerView.
+			root.setTag(Integer.parseInt(getTag()));
 
-		TextView title = (TextView) view.findViewById(R.id.question_title);
-		title.setText(question.getValue());
+			TextView title = (TextView) view.findViewById(R.id.question_title);
+			title.setText(question.getValue());
+			if (question.isRequired()) {
+				title.setContentDescription(question.getValue() + ". " + getString(R.string.apptentive_required));
+			}
 
-		setInstructions(question.getRequiredText(), question.getInstructions());
+			setInstructions(question.getRequiredText(), question.getInstructions());
 
-		validationFailedBorder = view.findViewById(R.id.validation_failed_border);
+			validationFailedBorder = view.findViewById(R.id.validation_failed_border);
 
-		sentMetric = (savedInstanceState != null) && savedInstanceState.getBoolean(SENT_METRIC, false);
+			sentMetric = (savedInstanceState != null) && savedInstanceState.getBoolean(SENT_METRIC, false);
+		} catch (Exception e) {
+			ApptentiveLog.e(e, "Exception in %s.onCreateView()", BaseSurveyQuestionView.class.getSimpleName());
+			logException(e);
+		}
 	}
 
 

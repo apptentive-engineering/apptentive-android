@@ -8,6 +8,9 @@ package com.apptentive.android.sdk.module.engagement.interaction.model.survey;
 
 import com.apptentive.android.sdk.ApptentiveLog;
 
+import static com.apptentive.android.sdk.ApptentiveLogTag.INTERACTIONS;
+import static com.apptentive.android.sdk.debug.ErrorMetrics.logException;
+
 public interface Question {
 	int QUESTION_TYPE_SINGLELINE  = 1;
 	int QUESTION_TYPE_MULTICHOICE = 2;
@@ -38,7 +41,8 @@ public interface Question {
 			try {
 				return Type.valueOf(type);
 			} catch (IllegalArgumentException e) {
-				ApptentiveLog.v("Error parsing unknown Question.Type: " + type);
+				ApptentiveLog.v(INTERACTIONS, "Error parsing unknown Question.Type: " + type);
+				logException(e);
 			}
 			return unknown;
 		}

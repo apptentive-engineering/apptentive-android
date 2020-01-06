@@ -10,7 +10,10 @@ import android.content.SharedPreferences;
 
 import com.apptentive.android.sdk.ApptentiveInternal;
 import com.apptentive.android.sdk.ApptentiveLog;
+import com.apptentive.android.sdk.debug.ErrorMetrics;
 import com.apptentive.android.sdk.util.Constants;
+
+import static com.apptentive.android.sdk.ApptentiveLogTag.CONVERSATION;
 
 public class VersionHistoryStoreMigrator {
 
@@ -23,8 +26,8 @@ public class VersionHistoryStoreMigrator {
 	private static boolean migrated_to_v2;
 
 	public static void migrateV1ToV2(String oldFormat) {
-		ApptentiveLog.i("Migrating VersionHistoryStore V1 to V2.");
-		ApptentiveLog.i("V1: %s", oldFormat);
+		ApptentiveLog.i(CONVERSATION, "Migrating VersionHistoryStore V1 to V2.");
+		ApptentiveLog.i(CONVERSATION, "V1: %s", oldFormat);
 		try {
 			String[] entriesOld = oldFormat.split(OLD_ENTRY_SEP);
 			for (String entryOld : entriesOld) {
@@ -36,12 +39,14 @@ public class VersionHistoryStoreMigrator {
 						Double.parseDouble(entryPartsOld[OLD_POSITION_TIMESTAMP])
 					);
 				} catch (Exception e) {
-					ApptentiveLog.w("Error migrating old version history entry: %s", entryOld);
+					ApptentiveLog.w(CONVERSATION, "Error migrating old version history entry: %s", entryOld);
+					logException(e);
 				}
 			}
-			ApptentiveLog.i("V2: %s", VersionHistoryStore.getBaseArray().toString());
+			ApptentiveLog.i(CONVERSATION, "V2: %s", VersionHistoryStore.getBaseArray().toString());
 		} catch (Exception e) {
-			ApptentiveLog.w("Error migrating old version history entries: %s", oldFormat);
+			ApptentiveLog.w(CONVERSATION, "Error migrating old version history entries: %s", oldFormat);
+			logException(e);
 		}
 	}
 
@@ -53,7 +58,7 @@ public class VersionHistoryStoreMigrator {
 		if (migrated_to_v2) {
 			return;
 		}
-		if (ApptentiveInternal.getInstance() != null) {
+		if (ApptentiveInternal.isApptentiveRegistered()) {
 			SharedPreferences prefs = ApptentiveInternal.getInstance().getGlobalSharedPrefs();
 			if (prefs != null) {
 				migrated_to_v2 = prefs.getBoolean(Constants.PREF_KEY_VERSION_HISTORY_V2_MIGRATED, false);
@@ -65,5 +70,9 @@ public class VersionHistoryStoreMigrator {
 				prefs.edit().putBoolean(Constants.PREF_KEY_VERSION_HISTORY_V2_MIGRATED, true).apply();
 			}
 		}
+	}
+
+	private static void logException(Exception e) {
+		ErrorMetrics.logException(e);
 	}
 }
