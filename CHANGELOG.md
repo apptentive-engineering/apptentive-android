@@ -1,8 +1,26 @@
-# 2020-01-06 - v5.5.1
+# 2020-08-27 - v5.5.4
 
-#### Changes
+#### Fixes
 
-* No changes
+* Android 11 support.
+
+# 2020-04-27 - v5.5.3
+
+#### Improvements
+
+* Improve Accessibility in Surveys for TalkBack users.
+
+# 2020-04-24 - v5.5.2
+
+#### Fixes
+
+* Fix potential NPE when presenting a survey without terms and conditions.
+
+# 2020-04-14 - v5.5.1
+
+#### Improvements
+
+* Add a configuration property to display terms and conditions.
 
 # 2019-11-12 - v5.5.0
 
