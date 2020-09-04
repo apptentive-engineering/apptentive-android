@@ -8,16 +8,19 @@ package com.apptentive.android.sdk.module.engagement.interaction.fragment;
 
 import android.app.Activity;
 import android.content.res.Resources;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.text.Html;
 import android.text.TextUtils;
+import android.text.method.LinkMovementMethod;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.webkit.URLUtil;
 import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -32,6 +35,7 @@ import com.apptentive.android.sdk.ApptentiveViewExitType;
 import com.apptentive.android.sdk.R;
 import com.apptentive.android.sdk.debug.Assert;
 import com.apptentive.android.sdk.model.SurveyResponsePayload;
+import com.apptentive.android.sdk.module.engagement.interaction.model.TermsAndConditions;
 import com.apptentive.android.sdk.module.engagement.interaction.model.SurveyInteraction;
 import com.apptentive.android.sdk.module.engagement.interaction.model.survey.MultichoiceQuestion;
 import com.apptentive.android.sdk.module.engagement.interaction.model.survey.MultiselectQuestion;
@@ -48,8 +52,6 @@ import com.apptentive.android.sdk.module.survey.OnSurveyFinishedListener;
 import com.apptentive.android.sdk.module.survey.OnSurveyQuestionAnsweredListener;
 import com.apptentive.android.sdk.util.StringUtils;
 import com.apptentive.android.sdk.util.Util;
-import com.apptentive.android.sdk.util.threading.DispatchQueue;
-import com.apptentive.android.sdk.util.threading.DispatchTask;
 import com.apptentive.android.sdk.view.ApptentiveNestedScrollView;
 
 import org.json.JSONException;
@@ -97,8 +99,10 @@ public class SurveyFragment extends ApptentiveBaseFragment<SurveyInteraction> im
 			TextView description = (TextView) v.findViewById(R.id.description);
 			description.setText(interaction.getDescription());
 
-			final Button send = (Button) v.findViewById(R.id.send);
+			updateTermsAndConditions(v);
 
+
+			final Button send = (Button) v.findViewById(R.id.send);
 			String sendText = interaction.getSubmitText();
 			if (!TextUtils.isEmpty(sendText)) {
 				send.setText(sendText);
@@ -149,24 +153,8 @@ public class SurveyFragment extends ApptentiveBaseFragment<SurveyInteraction> im
 						Assert.assertNotNull(fragment, "Expected to have a scroll pos");
 						if (fragment != null) {
 							scrollView.scrollToChild(fragment.getView());
-
 							if (fragment instanceof SurveyQuestionView) {
-								fragment.getView().requestFocus();
-
-								final String errorMessage = ((SurveyQuestionView) fragment).getErrorMessage();
-								if (!StringUtils.isNullOrEmpty(errorMessage)) {
-									DispatchQueue.mainQueue().dispatchAsync(new DispatchTask() {
-										@Override
-										protected void execute() {
-											if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-												View fragmentView = fragment.getView();
-												if (fragmentView != null) {
-													fragmentView.announceForAccessibility(errorMessage);
-												}
-											}
-										}
-									}, 1500); // give other accessibility events a change to propagate
-								}
+								((SurveyQuestionView) fragment).focusOnQuestionTitleView();
 							}
 						}
 					}
@@ -211,6 +199,43 @@ public class SurveyFragment extends ApptentiveBaseFragment<SurveyInteraction> im
 			logException(e);
 		}
 		return v;
+	}
+
+	private void updateTermsAndConditions(View v) {
+		TermsAndConditions termsAndConditions = ApptentiveInternal.getInstance().getSurveyTermsAndConditions();
+			if (termsAndConditions != null){
+			updateTermsAndConditionsBody(v, termsAndConditions);
+			updateTermsAndConditionsLink(v, termsAndConditions);
+		}
+	}
+
+	private void updateTermsAndConditionsBody(View v, TermsAndConditions termsAndConditions) {
+		final TextView termsAndConditionsBodyTv = v.findViewById(R.id.terms_and_conditions_body);
+		final String termsAndConditionsBodyText = termsAndConditions.getBodyText();
+		final boolean isTermsAndConditionsBodyTextValid = !StringUtils.isNullOrBlank(termsAndConditionsBodyText);
+		if (isTermsAndConditionsBodyTextValid) {
+			termsAndConditionsBodyTv.setText(termsAndConditionsBodyText);
+			termsAndConditionsBodyTv.setVisibility(View.VISIBLE);
+		} else {
+			termsAndConditionsBodyTv.setVisibility(View.GONE);
+		}
+	}
+
+	private void updateTermsAndConditionsLink(View v, TermsAndConditions termsAndConditions) {
+		final TextView termsAndConditionsLinkTv = v.findViewById(R.id.terms_and_conditions_link);
+		final String termsAndConditionsLinkUrl = termsAndConditions.getLinkURL();
+		final String termsAndConditionsLinkText = termsAndConditions.getLinkText();
+		final boolean isTermsAndConditionsLinkUrlValid = !StringUtils.isNullOrBlank(termsAndConditionsLinkUrl) && URLUtil.isValidUrl(termsAndConditionsLinkUrl.trim());
+		final boolean isTermsAndConditionsLinkTextValid = !StringUtils.isNullOrBlank(termsAndConditionsLinkText);
+		if (isTermsAndConditionsLinkUrlValid) {
+			final String htmlLink = String.format("<a href='%s'>%s</a>", termsAndConditionsLinkUrl, isTermsAndConditionsLinkTextValid ? termsAndConditionsLinkText : termsAndConditionsLinkUrl );
+			termsAndConditionsLinkTv.setText(Html.fromHtml(htmlLink));
+			termsAndConditionsLinkTv.setMovementMethod(LinkMovementMethod.getInstance());
+			termsAndConditionsLinkTv.setVisibility(View.VISIBLE);
+		} else {
+			Log.e("Survey T&C: ", "Link URL invalid in the configuration file: Please make sure Link URL in TermsAndConditions is a valid link.");
+			termsAndConditionsLinkTv.setVisibility(View.GONE);
+		}
 	}
 
 	@Override
